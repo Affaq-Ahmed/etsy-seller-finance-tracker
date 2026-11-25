@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795538074550,
+      "tag": "0000_audited_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795538098250,
+      "tag": "0001_financial_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795538982886,
+      "tag": "0002_reversals_and_shipments",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795539079734,
+      "tag": "0003_explicit_posting_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795539111015,
+      "tag": "0004_financial_account_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795539219576,
+      "tag": "0005_financial_posting_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795539220283,
+      "tag": "0006_shipment_history_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795540286167,
+      "tag": "0007_integrity_followup",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795540846217,
+      "tag": "0008_deposit_reconciliation_capacity",
+      "breakpoints": true
+    }
+  ]
+}

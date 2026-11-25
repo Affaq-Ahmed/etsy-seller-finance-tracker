@@ -1,0 +1,184 @@
+{
+  "version": "1.6.3",
+  "source": "https://registry.npmjs.org/@better-auth/core/-/core-1.6.3.tgz",
+  "drizzleAdapterSource": "https://registry.npmjs.org/@better-auth/drizzle-adapter/1.6.3",
+  "tables": {
+    "user": {
+      "id": {
+        "type": "string",
+        "required": true
+      },
+      "name": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "email": {
+        "type": "string",
+        "required": true,
+        "unique": true
+      },
+      "emailVerified": {
+        "type": "boolean",
+        "required": true,
+        "unique": false
+      },
+      "image": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "createdAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "updatedAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      }
+    },
+    "session": {
+      "id": {
+        "type": "string",
+        "required": true
+      },
+      "expiresAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "token": {
+        "type": "string",
+        "required": true,
+        "unique": true
+      },
+      "createdAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "updatedAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "ipAddress": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "userAgent": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "userId": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      }
+    },
+    "account": {
+      "id": {
+        "type": "string",
+        "required": true
+      },
+      "accountId": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "providerId": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "userId": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "accessToken": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "refreshToken": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "idToken": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "accessTokenExpiresAt": {
+        "type": "date",
+        "required": false,
+        "unique": false
+      },
+      "refreshTokenExpiresAt": {
+        "type": "date",
+        "required": false,
+        "unique": false
+      },
+      "scope": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "password": {
+        "type": "string",
+        "required": false,
+        "unique": false
+      },
+      "createdAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "updatedAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      }
+    },
+    "verification": {
+      "id": {
+        "type": "string",
+        "required": true
+      },
+      "identifier": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "value": {
+        "type": "string",
+        "required": true,
+        "unique": false
+      },
+      "expiresAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "createdAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      },
+      "updatedAt": {
+        "type": "date",
+        "required": true,
+        "unique": false
+      }
+    }
+  },
+  "coreArtifactSha256": "38eae9a355db8e0d29f94f9ba67c9b002ce8463e3d5a06aa5521e42b793b1dca",
+  "adapterArtifactSha256": "dcd1ad58c2b4a355be346852beb63cd4e109eb508a7ed4b756fcbd330c69a0d3",
+  "adapterDrizzlePeer": ">=0.41.0"
+}

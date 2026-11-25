@@ -1,0 +1,20 @@
+{
+  "drizzle/0000_audited_schema.sql": "18c73420eea4de2599da5b5149ab65b68cdc2b513a8e5cd5ceb61843264eb460",
+  "drizzle/0001_financial_integrity.sql": "064c9e9216f509e932496bc456d35d49aab20c39c3aed7ccf28197ba6374da6b",
+  "drizzle/0002_reversals_and_shipments.sql": "b4f59164d4ecfd2ad50c08880740baac89b677a7f45f3e8ee41c757a880fbbc7",
+  "drizzle/0003_explicit_posting_events.sql": "8e8141b185bab0c5f053e56f6edd5fa5ad68193c13c1450b5b732cd5a83c59bf",
+  "drizzle/0004_financial_account_roles.sql": "02d4530f1b597b4636c1e6f928d91f545d7f2a2ed0fce37c4d3f1c99e207e829",
+  "drizzle/0005_financial_posting_hardening.sql": "78c2009c06fb8132bdeda68750014cb14b57c575ca7e536ab890a28a42ba5809",
+  "drizzle/0006_shipment_history_integrity.sql": "8119b2ef0a002d6bb75653bc4f23e773cdfc5a2b733b7d2a2e5f6fcb637755b7",
+  "drizzle/meta/0000_snapshot.json": "8e34a701f757b34ba2b519080a71137f8013167974a1ebb785b1798bcc58fd98",
+  "drizzle/meta/0001_snapshot.json": "1dedd88604037cb6d2dbf4225179023a7ff6dafbb0864c38fef7e43ad36c9005",
+  "drizzle/meta/0002_snapshot.json": "1f6b6a9c19796d9209d06b593a79ac698b8dae26d76b88e3cd3c0581fd1ed799",
+  "drizzle/meta/0003_snapshot.json": "6c8a42748a1ade5f41de853b55b67bda43ed87581d1b6d4d1ffa102b49f08fe4",
+  "drizzle/meta/0004_snapshot.json": "a37d0eadb9ab2cd631aecd5cba232ea06c776c59a83a84b80b64d8b700db1e81",
+  "drizzle/meta/0005_snapshot.json": "b4ea14f2004c54aabde512b73e61779dc2e387fb2c2af5922a3e78c3434db8b1",
+  "drizzle/meta/0006_snapshot.json": "36b79eba90619fe3660611275af247448d86e5e174bfff242d64cb26dc0bed77",
+  "drizzle/0007_integrity_followup.sql": "46c6d159cfd76e7a98e1b1784c6a2f3a214d38d80123717e7f6260ebe1892591",
+  "drizzle/meta/0007_snapshot.json": "17ef6051a7742fa52d018eed4a0282bf67e5fe07258d8dbc39b5643fd9e0db14",
+  "drizzle/0008_deposit_reconciliation_capacity.sql": "a1c609ea2843acc90b01859157033859d3fa6315bacc7539d55461935ea3f753",
+  "drizzle/meta/0008_snapshot.json": "3f0e9c770d84e066948a16a0a7be5469de1cf9b1e8c9248eea6a015a95c5f647"
+}

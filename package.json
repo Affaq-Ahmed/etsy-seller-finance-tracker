@@ -10,9 +10,13 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "db:check": "drizzle-kit check"
+    "db:check": "drizzle-kit check",
+    "test:db:offline": "node --test tests/offline-schema.test.cjs",
+    "test:db:integration": "node --test tests/integration/financial-integrity.test.cjs",
+    "test:db:concurrency": "node --test tests/integration/concurrency.test.cjs"
   },
   "dependencies": {
+    "@next/env": "16.4.6",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.44.7",
     "next": "16.4.6",
