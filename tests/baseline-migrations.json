@@ -16,5 +16,7 @@
   "drizzle/0007_integrity_followup.sql": "46c6d159cfd76e7a98e1b1784c6a2f3a214d38d80123717e7f6260ebe1892591",
   "drizzle/meta/0007_snapshot.json": "17ef6051a7742fa52d018eed4a0282bf67e5fe07258d8dbc39b5643fd9e0db14",
   "drizzle/0008_deposit_reconciliation_capacity.sql": "a1c609ea2843acc90b01859157033859d3fa6315bacc7539d55461935ea3f753",
-  "drizzle/meta/0008_snapshot.json": "3f0e9c770d84e066948a16a0a7be5469de1cf9b1e8c9248eea6a015a95c5f647"
+  "drizzle/meta/0008_snapshot.json": "3f0e9c770d84e066948a16a0a7be5469de1cf9b1e8c9248eea6a015a95c5f647",
+  "drizzle/0009_auth_rate_limit.sql": "b1c38409fe797083f9b5443f87eac37a806d632f4b70dac651b120bc9a1dcf67",
+  "drizzle/meta/0009_snapshot.json": "81cd73e57af7386dc5780087513cf0115c53a9bd4c9c408cf4ea08dd16de3746"
 }

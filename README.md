@@ -1,8 +1,8 @@
 # Etsy Seller Finance Tracker
 
-A multi-tenant financial SaaS for Etsy sellers. It tracks orders, supplier purchases, Etsy payouts, Payoneer transactions, USD→PKR bank withdrawals, expenses, refunds and profitability. The stack is Next.js 16, TypeScript, PostgreSQL and Drizzle ORM, with Better Auth planned, and it targets zero-cost infrastructure.
+A multi-tenant financial SaaS for Etsy sellers. It tracks orders, supplier purchases, Etsy payouts, Payoneer transactions, USD→PKR bank withdrawals, expenses, refunds and profitability. The stack is Next.js 16, TypeScript, PostgreSQL, Drizzle ORM and Better Auth, and it targets zero-cost infrastructure.
 
-**Status:** the V1 database foundation is complete and verified locally; application development has not started. See [STATUS.md](docs/STATUS.md).
+**Status:** the V1 database foundation and authentication with tenant isolation are implemented and verified locally; financial features have not started and nothing is deployed. See [STATUS.md](docs/STATUS.md).
 
 ## Documentation
 
@@ -24,4 +24,4 @@ npm ci
 npx tsc --noEmit && npm run lint && npm run test:db:offline
 ```
 
-Database integration tests run only against a disposable local container. See [DEVELOPMENT.md §5.4](docs/DEVELOPMENT.md#54-disposable-local-database). Never use `drizzle-kit push`, and never edit migrations `0000–0008`.
+Database integration tests run only against a disposable local container. See [DEVELOPMENT.md §5.4](docs/DEVELOPMENT.md#54-disposable-local-database). Never use `drizzle-kit push`, and never edit migrations `0000–0009`.

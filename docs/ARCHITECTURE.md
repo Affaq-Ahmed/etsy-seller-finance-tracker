@@ -6,7 +6,7 @@ This is the baseline architecture document: system design, data and financial mo
 
 The owner's reference specifications are [System Architecture v1.1](System_Architecture.md) and [Database ERD v1.2](Database_ERD.md). This document consolidates them with what has been **implemented** and **decided** since. Each section states whether it is:
 
-- **Implemented**: enforced in migrations 0000–0008 and verified.
+- **Implemented**: enforced in migrations 0000–0009 (all frozen) and verified, or built in application code and verified by tests.
 - **Proposed**: designed, not approved, not implemented.
 - **Open**: needs an owner decision.
 
@@ -41,7 +41,7 @@ The owner's reference specifications are [System Architecture v1.1](System_Archi
 
   Each module owns its services, schemas, repositories and validation. Business rules live in domain services, never directly in route handlers.
 - **Background jobs** (System Architecture §7): a PostgreSQL-backed queue (`background_jobs`, tenant-owned) dispatched by a single Cloudflare Cron Trigger. Jobs are idempotent, short and chunked. External job services are not allowed.
-- **Implementation state:** only the database layer exists. There are no domain services, route handlers, authentication or UI beyond the Next.js scaffold.
+- **Implementation state (2026-11-25):** the database layer (0000–0009), authentication, tenant resolution, onboarding and the tenant-scoped data access layer are implemented and verified locally (§5, §7.2, §8). No financial domain services, financial route handlers or financial UI exist yet.
 
 ## 2. Deployment and runtime (System Architecture v1.1 §3, §13–15)
 
@@ -71,7 +71,20 @@ Must be tested before adoption:
 3. Re-run the concurrency suite through Hyperdrive.
 4. Long-held transactions consume scarce origin connections.
 
-### 2.2 Operating rules
+### 2.2 Authentication compute (Accepted 2026-11-25, owner; not deployed)
+
+Email/password hashing cannot run within Workers Free's 10 ms CPU limit (§8), so authentication is split (decision A19):
+
+- The main application stays on Cloudflare Workers.
+- `/api/auth/*` runs on **separate free Node.js compute**, using the same Better Auth code and database. The Worker proxies `/api/auth/*` to it, so the session cookie stays first-party on the application origin (`BETTER_AUTH_URL`).
+- Session checks on the Worker are a database lookup plus an HMAC cookie check. They never hash a password.
+- **No provider is selected or deployed.** At the deployment milestone, verify the provider's free-tier terms allow a commercial SaaS, and check reliability, cold starts and resource limits. The host needs about 32 MiB per concurrent hash (4 concurrent hashes peaked at about 150 MiB RSS locally).
+- **Deployment is blocked** until the provider is validated. Further prerequisites:
+  - Rate limiting needs a trusted client-IP header that clients cannot spoof (§8), and the auth service must accept traffic only from the Worker.
+  - The Workers adapter must build the container per request (§5).
+  - Hyperdrive and Neon behavior must be verified (§2.1).
+
+### 2.3 Operating rules
 
 - Never enable paid plans, overages or paid services (System Architecture §14).
 - When a free quota runs out, report it and stop the affected writes safely.
@@ -79,15 +92,15 @@ Must be tested before adoption:
 
 ## 3. Data architecture (Implemented)
 
-Defined by `src/db/schema.ts`, `src/db/auth-schema.ts`, `src/db/sql/*.sql` and `drizzle/0000–0008`.
+Defined by `src/db/schema.ts`, `src/db/auth-schema.ts`, `src/db/sql/*.sql` and `drizzle/0000–0009`.
 
-**Runtime catalog (verified 2026-11-24 on PostgreSQL 18.6):** 39 tables, 20 enums, 83 foreign keys, 135 indexes, 19 functions, 53 triggers, 9 recorded migrations.
+**Runtime catalog (verified 2026-11-25 on PostgreSQL 18.6, fresh database, full chain):** 40 tables, 20 enums, 83 foreign keys, 137 indexes, 19 functions, 53 triggers, 10 recorded migrations. Migration 0009 (`0009_auth_rate_limit`) added only the auth-owned `rate_limit` table: `id` text PK, `key` text NOT NULL with unique index `rate_limit_key_uq`, `count` integer, and `last_request` bigint (epoch ms). This matches Better Auth 1.7.25's generated Drizzle model.
 
 ### 3.1 Tenancy
 
 - **Tenant root:** `business_accounts`, one per owner, enforced by unique `business_accounts.owner_user_id` (`business_accounts_owner_uq`).
 - **34 business tables carry a non-null `account_id`** with a direct, restrictive tenant-root FK. Child relationships use **composite FKs** that include `account_id`, and `currency` where money is involved, so cross-tenant or cross-currency links are rejected. Every composite target has an exact table-level UNIQUE key; these are emitted inline so that key-before-FK ordering is correct in the initial migration.
-- The auth tables `user`, `session`, `account` and `verification` are not tenant-scoped. **In the auth `account` table, `account_id` is the external provider identity, not a tenant.**
+- The auth tables `user`, `session`, `account`, `verification` and `rate_limit` (0009) are not tenant-scoped. **In the auth `account` table, `account_id` is the external provider identity, not a tenant.**
 - Deletion is **restrictive**, so business and financial history cannot cascade away. `audit_logs` actors are scoped to the account owner (V1).
 - **Composite FKs prevent cross-tenant relationships on write. They do not authorize SELECT, UPDATE or DELETE.** Read isolation is an application responsibility (§7).
 
@@ -103,7 +116,7 @@ Defined by `src/db/schema.ts`, `src/db/auth-schema.ts`, `src/db/sql/*.sql` and `
   - analytical scenario/order rows
   - financial source events
   - non-blank idempotency keys
-- **Auth identity:** default text IDs. The Drizzle objects map to Better Auth models via `betterAuthSchema` (`user→users`, `session→sessions`, `account→authAccounts`, `verification→verifications`), with camelCase properties over snake_case columns and `usePlural: false`. Never map auth `account` to `business_accounts`.
+- **Auth identity:** default text IDs. The Drizzle objects map to Better Auth models via `betterAuthSchema` (`user→users`, `session→sessions`, `account→authAccounts`, `verification→verifications`, `rateLimit→rateLimits`), with camelCase properties over snake_case columns and `usePlural: false`. Never map auth `account` to `business_accounts`.
 - `exchange_rates` and `background_jobs` are **tenant-owned** (no global rows). Global scheduling dispatches per-tenant jobs. A shared reference-data model, if ever needed, must be separate from business records.
 
 ### 3.3 Naming differences from System Architecture v1.1 §5
@@ -248,16 +261,28 @@ Deferred, per-tenant checks:
 - **Pre-guard history:** existing finalized or malformed history is not rewritten. Review any legacy or imported history before deploying.
 - **Service validation still required:** draft polymorphic source references, notification references and audit entity references. `updated_at` maintenance, audit-log creation and actor attribution are also service responsibilities.
 
-## 5. Application layer (Proposed; pending approval)
+## 5. Application layer (Implemented 2026-11-25)
 
-- **API:** System Architecture §11 specifies **versioned Route Handlers** (`/api/v1/...`) with thin handlers over domain services. The proposed auth design also uses Server Actions for forms. **See conflict C2 (§10).**
-- **Data Access Layer:** `src/server/dal/**` (`server-only`) is the only code allowed to query tenant data. Every function takes a `TenantContext` first and applies `account_id = ctx.accountId` to every WHERE, join, UPDATE and DELETE.
-- **Errors:** map `23503`, `23514`, `23505` and `P0001` to 4xx responses with generic messages. Never expose SQL, stack traces or secrets.
-- **Financial writes:**
-  - Each runs in one transaction with a deterministic event key (e.g. `order:<id>:INITIAL`).
-  - A bounded whole-transaction retry applies on `40001`/`40P01`.
-  - Success is acknowledged only after COMMIT.
-- **Configuration:** AGENTS.md requires a configuration module with injected configuration and startup validation of required environment variables. **Not yet designed. See conflict C4.**
+| Path | Responsibility |
+| --- | --- |
+| `src/server/config/env.ts` | Zod validation of `NODE_ENV`, `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`. `ConfigError` lists variable **names** only. `getConfig()` is called only by the composition root. |
+| `src/instrumentation.ts` | Startup validation: a Node server refuses to start with invalid configuration. It is skipped during `next build`, so builds need no runtime secrets. |
+| `src/server/container.ts` | Composition root (plain factories, no DI library): `createContainer(config)` wires `createDb` and `createAuth`. On Node there is one container per process, kept on `globalThis`. **The Workers adapter must build it per request** (§2.1; deployment milestone). |
+| `src/server/db/` | `createDb` (postgres.js, `max: 5`, prepared statements on), `runInTransaction` (bounded whole-transaction retry on `40001`/`40P01`, 3 attempts, resolves after COMMIT), and `getPostgresErrorCode`. |
+| `src/server/dal/` | **The only code that queries tenant data.** `tenantScope(db, tenant)` adds `account_id = tenant.accountId` to every SELECT, UPDATE and DELETE, sets it on every INSERT, and throws `TenantScopeViolationError` if a caller supplies `accountId`, `account_id`, `tenantId` or `ownerUserId`. Modules: `business-accounts` (tenant root), `account-settings`, `financial-accounts`, `audit-logs`. |
+| `src/server/auth/` | Better Auth configuration (§8), session and tenant resolution, and page guards (§7.2). |
+| `src/server/http/` | `sessionRoute`/`tenantRoute` wrappers, the same-origin check, strict JSON bodies (16 KiB cap), generic error mapping and `Cache-Control: private, no-store`. |
+| `src/server/onboarding/`, `src/server/business/`, `src/server/api/` | The onboarding service, the business summary, and thin route handlers. |
+
+- **API style (decision A16):**
+  - Better Auth's own handler (`/api/auth/*`), used through its browser client, keeps Better Auth's built-in Origin/CSRF checks and rate limits. Direct server-side `auth.api` calls would bypass them, so they are used only for `getSession`.
+  - The app's own endpoints are versioned Route Handlers: `POST /api/v1/onboarding` and `GET /api/v1/business`.
+  - **No Server Actions**, so Better Auth's `nextCookies()` plugin is not used.
+- **Errors:**
+  - `23505` → 409; `23503`, `23514` and `P0001` → 422; anything else → 500. All carry generic messages.
+  - drizzle-orm 0.45's `DrizzleQueryError` embeds the **SQL and its parameters** in `message`, so error messages are never returned or logged. Only the error name and SQLSTATE are logged.
+- **Static guards:** ESLint `@typescript-eslint/no-restricted-imports` allows the schema, `drizzle-orm`, `postgres` and value imports of the database client only in `src/db`, `src/server/{db,dal,auth}` and `src/server/container.ts`. `tests/app/unit/static-guards.test.ts` enforces the same rule plus the T16–T18 checks.
+- **Financial writes (future milestones):** each runs in one transaction with a deterministic event key (e.g. `order:<id>:INITIAL`) via `runInTransaction`, and is acknowledged only after COMMIT.
 
 ## 6. Imports, exports and notifications (System Architecture v1.1 §9–10)
 
@@ -271,108 +296,141 @@ Deferred, per-tenant checks:
 
 - Composite tenant/currency FKs, restrictive deletes, immutability triggers, deferred integrity checks and security-invoker functions.
 - **Runtime-role requirement (not yet configured):** the application role must not own tables and must not have `TRUNCATE`, trigger-disabling or trigger-creation privileges.
-- **Read authorization is not implemented anywhere yet.**
+- **Read authorization is enforced by the application** (the tenant-scoped data access layer, §5 and §7.2). It is not enforced in the database: there is no RLS yet.
 
-### 7.2 Proposed: authentication and tenant isolation (pending approval)
+### 7.2 Authentication and tenant isolation (Implemented 2026-11-25)
 
 **Non-negotiable rule.** Tenant identity comes **only** from the authenticated server-side session. Tenant IDs from bodies, query strings, route params, headers, non-session cookies or client state are never trusted.
 
 **Tenant context**
-- `requireSession()` and `requireTenant()` live in `src/server/auth/` (`server-only`) and are memoized per request.
-- `requireTenant()` resolves `session.user.id → business_accounts.owner_user_id` and returns `{ userId, accountId: TenantId }`.
-- `TenantId` is a branded type that only `requireTenant()` creates.
+- `src/server/auth/session.ts` holds the request-agnostic logic:
+  - `resolveSession(deps, headers)` reads the Better Auth session through `auth.api.getSession`.
+  - `resolveTenant(deps, headers)` resolves `session.user.id → business_accounts.owner_user_id` and returns `unauthenticated`, `not_onboarded`, or `ok` with `{ userId, sessionId, accountId: TenantId }`.
+- `TenantId` is a branded type created **only** in `session.ts`, either by `resolveTenant` or by `tenantForOwnedBusiness`, which first checks that the session user owns the business. The static guards enforce this.
+- Page guards (`src/server/auth/page-guards.ts`): `requireSession()`, `requireTenant()` and `requireOnboardingSession()`, memoized per request with React `cache()`.
+- Route wrappers (`src/server/http/routes.ts`): `sessionRoute()` and `tenantRoute()`.
 
-| Situation | Result |
-| --- | --- |
-| No session, or an invalid/tampered session | Page redirects to `/sign-in`; action/route returns 401 |
-| Expired or revoked session (sign-out, password reset) | Treated as unauthenticated; cookie cleared |
-| Signed in but no business yet | Redirect to `/onboarding`, or 409 for API calls |
-| Signed in with a business | Returns `{ userId, accountId }` |
+| Situation | Page | API |
+| --- | --- | --- |
+| No session; invalid, tampered, expired or revoked session | Redirect to `/sign-in` | 401 `UNAUTHENTICATED`. A stale session cookie is cleared (`Max-Age=0`). Pages cannot clear cookies; the stale cookie is rejected on every request and replaced at the next sign-in |
+| Signed in but no business yet | Redirect to `/onboarding` | 409 `ONBOARDING_REQUIRED` |
+| Signed in with a business | Tenant context | Tenant context |
 
-**Onboarding.** One idempotent transaction creates:
-1. `business_accounts`.
-2. `account_settings` (delay 14 days, weekday Monday; both configurable).
-3. A starter chart of `financial_accounts` with explicit roles: `ETSY_RECEIVABLE`, `ETSY_PAYOUT_CLEARING`, `PAYONEER`, `TRANSFER_CLEARING` (USD **and** PKR), `BANK` (PKR), `SUPPLIER_COST`, `DIRECT_EXPENSE`, `SHARED_EXPENSE`, `REVENUE` and `REFUND` (representation is PRODUCT D5).
+**Onboarding (decision A22).** `POST /api/v1/onboarding` (`sessionRoute`) takes `{ "shopName": string }`: trimmed, 1–160 characters, strict schema. One transaction (`runInTransaction`) creates:
+1. `business_accounts`, via `INSERT … ON CONFLICT (owner_user_id) DO NOTHING`. A retry, a race or a second attempt returns the existing business unchanged (200, `created: false`). A new business returns 201. A concurrent request waits on the unique index and then sees the committed business. There is no tenant switching.
+2. `account_settings` with documented keys: **`payout_eligibility_delay_days` = 14** and **`payout_weekday` = `"MONDAY"`** (JSONB values; configurable per business, PRODUCT.md §5 rule 15).
+3. The starter chart of `financial_accounts`, with explicit roles. `TRANSFER_CLEARING` exists in USD (the Payoneer withdrawal principal) and PKR, `BANK` is PKR, and `ETSY_RECEIVABLE`, `ETSY_PAYOUT_CLEARING`, `PAYONEER`, `SUPPLIER_COST`, `DIRECT_EXPENSE`, `SHARED_EXPENSE` and `REVENUE` use the business base currency (USD by default). **No `REFUND` account until PRODUCT.md D5 is decided**, and no undocumented PKR expense accounts.
+4. `audit_logs` entries (`CREATE`, actor = owner, `before_data` null) for the business, both settings and every account. The existing `audit_logs_owner_tenant_fk` makes the database reject any other actor.
 
-A unique-index conflict (`23505`) means the user is already onboarded. There is no tenant switching.
+Onboarding posts no journal entries. Any failure rolls the whole transaction back.
 
 **Isolation rules**
-- An ID belonging to another tenant returns the same **not-found** response as a non-existent ID.
-- Inserts take `account_id` from context only.
-- Zod input schemas are `.strict()` and never contain `accountId`, `account_id`, `tenantId` or `ownerUserId`.
-- CI guards:
-  - Only the DAL and auth code import the database.
-  - Every Server Action and route handler calls `requireTenant()`/`requireSession()`, or is annotated `// public:`.
-  - A meta-test checks that all 34 tenant tables have a DAL module and cross-tenant tests.
+- An ID belonging to another tenant returns the same **not-found** result as a non-existent ID (the DAL returns `null`; the API returns 404 `NOT_FOUND`).
+- Inserts take `account_id` from the context only. Updates cannot change `account_id`.
+- Zod input schemas are strict and never contain `accountId`, `account_id`, `tenantId` or `ownerUserId`. An unknown key returns 400 naming the field, never its value.
+- State-changing app API requests must carry `Origin` equal to `BETTER_AUTH_URL`. If `Sec-Fetch-Site` is sent, it must be `same-origin`.
+- Static guards:
+  - Only the DAL, auth, db and container modules import the database.
+  - Every route handler uses `sessionRoute`/`tenantRoute` or is annotated `// public:`; every page calls a page guard or is annotated `// public:`.
+  - The T16 meta-test lists all 34 tenant tables. The 3 exposed tables (`account_settings`, `financial_accounts`, `audit_logs`) must have a DAL module and cross-tenant tests, and the other 31 must be imported by no application code.
 
-**Sessions**
-- Database sessions, `expiresIn` 7 days, `updateAge` 1 day (to be confirmed).
-- **Cookie cache disabled**, so revocation takes effect immediately.
-- Cookies are `httpOnly`, `secure` and `sameSite=lax`, with a `__Secure-` prefix in production.
-- Sign-out deletes the session. Password reset or change revokes the other sessions.
+**Sessions (owner-confirmed 2026-11-25)**
+- Database sessions: `expiresIn` 7 days, `updateAge` 1 day. **The cookie cache is disabled**, so sign-out and revocation take effect on the next request.
+- Cookies are `HttpOnly` and `SameSite=Lax` with `Path=/`. `Secure` and the `__Secure-` prefix are used exactly when `BETTER_AUTH_URL` is https, which configuration requires in production.
+- Sign-out deletes the session. `revokeSessionsOnPasswordReset` is configured; password reset itself is deferred (PRODUCT.md D2).
+
+**Account enumeration (decision A20)**
+- Sign-up uses `autoSignIn: false`. A duplicate sign-up returns the same 200 response shape as a new account (a synthetic user and `token: null`), runs a dummy hash to even out timing, sets no cookie and leaves the existing account untouched. Users then sign in.
+- Sign-in returns the same 401 for an unknown email and for a wrong password, and Better Auth runs a dummy hash for unknown emails.
+- Better Auth's logger is set to `warn` with a message-only sink, so duplicate attempts never log the email address.
+- **Remaining limitation (accepted):** someone can still test whether an email is registered through the sign-in flow, for example by signing up with a password of their choice and then trying to sign in. Rate limiting slows this down. Full mitigation requires email verification, which is deferred with PRODUCT.md D2.
 
 **Next.js 16 specifics**
-- `proxy.ts` may only do an optimistic cookie-presence redirect. It is never authorization.
-- Every protected page, action and route handler calls `requireTenant()` itself. Layouts are not a security boundary.
-- With Cache Components on: never read cookies or headers inside `'use cache'`, and never cache tenant data in shared entries.
+- There is no `proxy.ts`. Every protected page and route handler calls its guard itself; layouts are not a security boundary.
+- Cache Components:
+  - Session reads happen inside `<Suspense>`, so `/app` and `/onboarding` build as partial prerenders.
+  - Guards and route wrappers read `headers()`/`request.headers` **before** anything else, so nothing session-dependent is prerendered at build time.
+  - There are **no cache directives** (`'use cache'` in any form) in `src`.
+  - Every app and auth API response is `Cache-Control: private, no-store`.
 
 **Defense in depth (later; separate approval and forward migration).** A least-privilege runtime role, then optional RLS with **transaction-local** `set_config('app.account_id', …, true)`. The transaction-local form is required under Hyperdrive.
 
-**Required security tests**
+**Security tests (status 2026-11-25; all against the disposable PostgreSQL 18.6 database)**
 
-| # | Case |
-| --- | --- |
-| T1 | Cross-tenant SELECT |
-| T2 | Cross-tenant UPDATE |
-| T3 | Cross-tenant DELETE |
-| T4 | Cross-tenant INSERT via the parent of another tenant |
-| T5 | Forged tenant IDs in body, query, headers or cookies |
-| T6 | Second business or tenant switching |
-| T7 | Every unauthenticated route and action |
-| T8 | Invalid or tampered sessions |
-| T9 | Expired session |
-| T10 | Logout replay |
-| T11 | Reset revokes sessions |
-| T12 | Concurrent onboarding |
-| T13 | Signed in but not onboarded |
-| T14 | CSRF and Origin |
-| T15 | Account enumeration |
-| T16 | Coverage meta-test |
-| T17 | Static guards |
-| T18 | Cache safety |
-| T19 | Rate limiting |
+| # | Case | Status | Where (`tests/app/`) |
+| --- | --- | --- | --- |
+| T1 | Cross-tenant SELECT | Pass | `db/tenant-isolation` |
+| T2 | Cross-tenant UPDATE | Pass | `db/tenant-isolation` |
+| T3 | Cross-tenant DELETE | Pass | `db/tenant-isolation` |
+| T4 | Cross-tenant INSERT (forged tenant keys; child row referencing another tenant's parent → `23503`) | Pass | `db/tenant-isolation` |
+| T5 | Forged tenant IDs in body, query, headers and cookies | Pass | `db/tenant-isolation`, `unit/onboarding-rules` |
+| T6 | Second business / tenant switching | Pass | `db/onboarding` |
+| T7 | Unauthenticated routes and pages | Pass | `db/api-routes`, `unit/page-guards` |
+| T8 | Invalid or tampered sessions | Pass | `db/auth-flows`, `db/api-routes` |
+| T9 | Expired session | Pass | `db/auth-flows`, `db/api-routes` |
+| T10 | Logout replay | Pass | `db/auth-flows`, `db/api-routes` |
+| T11 | Reset revokes sessions | **Deferred**: reset is out of scope until PRODUCT.md D2. The option is configured and asserted in `unit/auth-config` | — |
+| T12 | Concurrent onboarding (parallel requests, plus an observed lock wait with COMMIT and ROLLBACK) | Pass | `db/onboarding` |
+| T13 | Signed in but not onboarded | Pass | `db/onboarding`, `db/api-routes`, `unit/page-guards` |
+| T14 | CSRF and Origin (Better Auth and app API) | Pass | `db/origin-csrf`, `unit/http` |
+| T15 | Account enumeration | Pass, with the documented limitation | `db/auth-flows` |
+| T16 | Coverage meta-test | Pass | `unit/static-guards` |
+| T17 | Static guards | Pass | `unit/static-guards`, ESLint |
+| T18 | Cache safety | Pass | `unit/static-guards`, `db/api-routes` |
+| T19 | Rate limiting (database storage, per IP and path, concurrent burst, window reset) | Pass | `db/rate-limit` |
 
-## 8. Authentication (Proposed; pending approval)
+## 8. Authentication (Implemented 2026-11-25)
 
-**Library versions (researched 2026-11-24)**
-- **Recommended:** `better-auth` 1.7.x, exact pin, ≥ 1.7.16, and a patch that has been public at least 7 days; `@better-auth/drizzle-adapter` at the same version; `drizzle-orm` 0.45.4; `drizzle-kit` 0.31.11. `postgres` 3.4.9, Next.js 16.4.6 and React 19.3.0 stay unchanged.
-- **Why not 1.6.x:** better-auth 1.6.x requires `drizzle-kit >= 0.31.4` (the repo has 0.30.6). 1.6.35 and 1.7.x require `drizzle-orm ^0.45.2` (the repo has 0.44.7). The 1.6 line is inside the ranges of published advisories with no 1.6 backport: GHSA-965c-763c-88jm (critical, magic link + OAuth, fixed 1.7.7), GHSA-9hm7-xhfp-cx58 (OAuth email verification, fixed 1.7.16) and GHSA-44jh-23m7-hpcf (Postgres rate-limit race, fixed 1.7.7).
-- **Rejected:** drizzle 1.0 RC (pre-release, with breaking postgres-js codec changes).
-- **Upgrade risk:** drizzle-kit 0.30 → 0.31 changes how *future* enum migrations are generated. Snapshot and journal format changes were not ruled out, so the no-drift gate in DEVELOPMENT.md §6 is mandatory.
+**Pinned versions (owner-approved; decision A21).** All were rechecked against the GitHub advisory database and the npm registry on 2026-11-25 before installation: none is deprecated and no advisory affects any of them.
 
-**Configuration**
-- `drizzleAdapter(db, { provider: 'pg', schema: betterAuthSchema, usePlural: false, transaction: true })`, with default text IDs and `experimental.joins: false`.
-- `emailAndPassword`: enabled, minimum password length 12, maximum 128, `revokeSessionsOnPasswordReset`.
-- `nextCookies()` must be the **last** plugin. Route handler: `app/api/auth/[...all]/route.ts` via `toNextJsHandler(auth)`.
-- **No** magic-link, OAuth, SSO, admin or organization plugins in V1.
-- Direct `auth.api` calls bypass Better Auth's CSRF and `trustedOrigins` checks, so callers must assert the Origin themselves and allowlist any redirect targets.
-- Return generic errors so account existence cannot be inferred.
-- **Rate limiting:** memory storage is per-isolate and ineffective on Workers. Choose database storage (forward migration, ≥ 1.7.7) or a Cloudflare free rule.
+| Package | Version | Notes |
+| --- | --- | --- |
+| `better-auth`, `@better-auth/drizzle-adapter` | 1.7.25 | Newest patch that had been public for at least 7 days. Above every published fix (GHSA-965c-763c-88jm, GHSA-r4xp-prcw-77qf, GHSA-44jh-23m7-hpcf: all fixed in 1.7.7) |
+| `drizzle-orm` | 0.45.4 | The previous 0.44.7 was affected by GHSA-gpj5-g38j-94v9 (high; SQL injection via identifiers; fixed 0.45.2) |
+| `drizzle-kit` | 0.31.11 | The no-drift gate passed (DEVELOPMENT.md §7) |
+| `postgres` | 3.4.9 | Unchanged; now exact. The 4.x line exists but was not evaluated |
+| `zod` | 4.6.7 | Now a direct dependency (config and input validation) |
+| `vitest` / `vite` (dev) | 4.1.12 / 7.3.8 | Vite 7 brings its own esbuild 0.28; vite 8 left an invalid optional esbuild peer |
+| `overrides` (owner-approved) | `@better-auth/core` 1.7.25, `better-call` 1.4.5, `vite` → `$vite` | Without the first two, npm resolved an unapproved core 1.7.28 / `better-call` 1.4.6 as a *second* copy: two transaction contexts and two `APIError` classes. `$vite` makes vitest's own dependency use the root vite 7.3.8 pin |
 
-**Schema and known issues**
-- The auth-table schema matches the Better Auth **1.6.3** plugin-free manifest (`tests/fixtures/better-auth-1.6.3.json`). A 1.7.x manifest must be extracted and compared, and any missing column becomes a new forward migration (`0009+`).
-- Better Auth issue #12837 holds a transaction open during password hashing, which matters for Hyperdrive's connection budget.
+- **Correction (2026-11-25):** GHSA-9hm7-xhfp-cx58, cited in the 2026-11-24 research, does not exist in the GitHub advisory database.
+- **Rejected:** drizzle 1.0 RC (pre-release, breaking postgres-js codec changes).
+- **Known audit findings (pre-existing, not fixable within the pinned set):** 4 moderate, all from GHSA-67mh-4wv8-2f99 in esbuild 0.18.20 nested under drizzle-kit's `@esbuild-kit` loader. They affect only esbuild's dev server, which this project never runs. The committed baseline lockfile has the same versions, and npm's only "fix" is a downgrade to drizzle-kit 0.18.1. GHSA-gv7w-rqvm-qjhr was withdrawn (it was filed against the wrong package).
 
-**Password hashing (Open, decision gate)**
-- Better Auth's default is scrypt. The reported parameters are N=16384, r=16, p=1 with a 64-byte key; this is unverified from source. That is **about 32 MiB of memory per hash**.
-- The pure-JS implementation was reported at seconds of CPU. Native scrypt at secure parameters is very likely above 10 ms. OWASP-strength PBKDF2 or Argon2 are also over budget.
-- **Lowering work factors to fit is not acceptable.**
-- Options, which need an owner decision (PRODUCT D1):
-  1. Measure on a free Worker first.
-  2. Passkeys.
-  3. Email OTP or magic link.
-  4. Auth on separate free compute.
-  5. A different free host.
+**Configuration (`src/server/auth/auth.ts`)**
+- `drizzleAdapter(db, { provider: 'pg', schema: betterAuthSchema, usePlural: false, transaction: true })`, with default text IDs. Joins are off via `advanced.database.joins: false`; in 1.7.25 the option lives there, not under `experimental`.
+- `emailAndPassword`: enabled, 12–128 characters, `autoSignIn: false`, `requireEmailVerification: false` (D2), `revokeSessionsOnPasswordReset: true`. **Default hasher** (no custom `password` option).
+- `baseURL` and `trustedOrigins` are set to `BETTER_AUTH_URL`.
+- **`advanced.disableOriginCheck: false` and `disableCSRFCheck: false` are set explicitly.** Better Auth 1.7.25 skips its origin check whenever `NODE_ENV=test` unless this is set (`skipOriginCheck = isTest()`), so the tests would otherwise run against a weaker configuration than production.
+- `useSecureCookies` is true exactly when `BETTER_AUTH_URL` is https.
+- Telemetry is explicitly off (it defaults to off).
+- Logger: `level: 'warn'`, plus a sink that writes the message only and reduces attached errors to their name. Better Auth's default sink would print errors whose messages contain SQL parameters.
+- **No plugins.** In particular, no `nextCookies()`, because there are no Server Actions (A16). No magic-link, OAuth, SSO, admin or organization plugins in V1.
+- The route handler `src/app/api/auth/[...all]/route.ts` calls `auth.handler` and marks responses no-store.
+
+**Rate limiting (decision A18; migration 0009)**
+- `rateLimit: { enabled: true, storage: 'database' }` applies in every environment; Better Auth's default is production only.
+- The window and limits are **Better Auth's defaults, unchanged**: 100 requests per 10 s overall, and 3 per 10 s on `/sign-in*` and `/sign-up*`, per client IP and path.
+- Storage uses atomic conditional increments on the unique `key`. A concurrent burst of 12 requests let through exactly 3 (T19).
+- **Deployment prerequisite:**
+  - Better Auth trusts a single-value `x-forwarded-for` by default (`advanced.ipAddress.ipAddressHeaders`). Anyone who can reach the auth service directly can spoof that header, and with no IP header at all every request shares one bucket (outside dev and test).
+  - Before deployment, configure the trusted header the Worker proxy sets (for example `cf-connecting-ip`), and accept auth traffic only from the Worker.
+
+**Schema**
+- `tests/fixtures/better-auth-1.7.25.json` is generated from the installed `getAuthTables({ rateLimit: { storage: 'database' } })`.
+- The `user`, `session`, `account` and `verification` fields are **identical to the earlier 1.6.3 manifest**; only `rateLimit` was added (0009). The offline test checks the pinned version against this manifest.
+- The adapter also includes a runtime schema check (`findDrizzleSchemaProblems`).
+- **Better Auth issue #12837 is confirmed in 1.7.25:** sign-up hashes the password inside the adapter transaction (`runWithTransaction`), holding a database connection for roughly 45 ms. That is acceptable locally; it must be counted in the auth host's connection budget at deployment.
+
+**Password hashing (gate resolved by decision A19)**
+- **Verified from source** (`@better-auth/utils@0.5.1`): scrypt with N=16384, r=16, p=1 and a 64-byte key (`maxmem` 64 MiB), which is **32 MiB per hash**.
+- Under the `node` and `workerd` export conditions it uses native `node:crypto` scrypt; pure-JS `@noble/hashes` is only a fallback. The earlier "seconds of CPU" concern was about the pure-JS path.
+- Stored format: `<16-byte hex salt>:<64-byte hex key>` (asserted in `db/auth-flows`).
+- **Benchmark (2026-11-25, installed hasher, Node 26.10.0, Apple M4, 30 runs):**
+  - `hashPassword`: CPU p50 43.8 ms, p95 44.4 ms.
+  - `verifyPassword`: CPU p50 43.9 ms, p95 45.6 ms.
+  - Peak RSS 54 MiB for one hash at a time; 4 concurrent hashes took 59.7 ms wall and 218.8 ms total CPU, with 150.5 MiB RSS.
+- That is about 4.4× the Workers Free 10 ms limit on a faster core than Cloudflare's, so the work factor was kept and authentication moves to separate Node compute (§2.2). **Not measured on Workers itself.** That measurement is no longer needed, because auth does not run there.
 
 ## 9. Architecture decision log
 
@@ -392,20 +450,31 @@ A unique-index conflict (`23505`) means the user is already onboarded. There is 
 | A12 | 2026-11-24 | **Migrations 0000–0008 frozen**: forward-only, SHA-256 manifest, never `drizzle-kit push` | Accepted |
 | A13 | 2026-11-24 | `drizzle.config.ts` loads environment via `@next/env` (Next.js precedence, `.env.local`); generation works offline without a URL | Implemented |
 | A14 | 2026-11-24 | Database tests run only against a disposable, loopback-only Docker database through `scripts/local-db.cjs`; never `DATABASE_URL`, Neon or production | Implemented |
-| P1 | 2026-11-24 | Better Auth 1.7.x + drizzle-orm 0.45.4 + drizzle-kit 0.31.11 (§8) | Proposed |
-| P2 | 2026-11-24 | postgres.js via Hyperdrive, caching disabled, direct Neon endpoint (§2.1) | Proposed |
-| P3 | 2026-11-24 | Session-derived tenant context, DAL, onboarding, session policy, test matrix (§7.2) | Proposed |
+| P1 | 2026-11-24 | Better Auth 1.7.x + drizzle-orm 0.45.4 + drizzle-kit 0.31.11 (§8) | Superseded by A21 |
+| P2 | 2026-11-24 | postgres.js via Hyperdrive, caching disabled, direct Neon endpoint (§2.1) | Proposed; verification deferred (A23) |
+| P3 | 2026-11-24 | Session-derived tenant context, DAL, onboarding, session policy, test matrix (§7.2) | Implemented (A22) |
+| A15 | 2026-11-25 | Vitest 4.1.12 for application tests (`tests/app/`). The existing `node:test` database suites stay. Playwright is deferred to the frontend phase (resolves C1) | Accepted (owner); implemented |
+| A16 | 2026-11-25 | Better Auth's own handler plus browser client for sign-up, sign-in and sign-out; versioned Route Handlers `POST /api/v1/onboarding` and `GET /api/v1/business`; no Server Actions, so no `nextCookies()` (resolves C2) | Accepted (owner); implemented |
+| A17 | 2026-11-25 | Configuration: Zod-validated environment, startup validation in `instrumentation.ts` (skipped at build), plain factories and a composition root, no DI library (resolves C4) | Accepted (owner); implemented |
+| A18 | 2026-11-25 | Database-backed Better Auth rate limiting through forward migration **0009** (`rate_limit`), enabled in all environments, with Better Auth's default limits (resolves C5) | Accepted (owner); implemented |
+| A19 | 2026-11-25 | Email/password with Better Auth's default scrypt (work factor unchanged). `/api/auth/*` runs on separate free Node compute behind the Worker proxy; the main app stays on Workers. No provider selected; deployment blocked until one is validated (§2.2; resolves C3 and PRODUCT D1) | Accepted (owner); code implemented, not deployed |
+| A20 | 2026-11-25 | Enumeration resistance: `autoSignIn: false`, a generic duplicate sign-up response, no cookie at sign-up, users sent to sign-in, logger at `warn`. The sign-in-flow limitation is documented and accepted until email verification (D2) | Accepted (owner); implemented |
+| A21 | 2026-11-25 | Exact pins: better-auth and drizzle-adapter 1.7.25, drizzle-orm 0.45.4, drizzle-kit 0.31.11, postgres 3.4.9, zod 4.6.7, vitest 4.1.12, vite 7.3.8; `overrides` for `@better-auth/core` 1.7.25, `better-call` 1.4.5 and `vite` → `$vite` (all owner-approved; `$vite` confirmed 2026-11-25). Installed with `--ignore-scripts --userconfig /dev/null` | Accepted (owner); implemented |
+| A22 | 2026-11-25 | Separate idempotent onboarding transaction: settings `payout_eligibility_delay_days`/`payout_weekday`; explicit-role starter chart without REFUND (D5) and without undocumented PKR expense accounts; audit entries using the existing `audit_logs` schema | Accepted (owner); implemented |
+| A23 | 2026-11-25 | Hyperdrive and Neon checks deferred to the deployment milestone. Only the disposable local database is used; Hyperdrive and Neon behavior is **unverified** | Accepted (owner) |
+| A24 | 2026-11-25 | **Migration 0009 frozen.** Its SQL and snapshot SHA-256 values are in `tests/baseline-migrations.json` (20 entries, 0000–0009). It is never edited, reordered or regenerated; later changes are forward-only from 0010 | Accepted (owner) |
 
 ## 10. Open conflicts and decisions (do not resolve without the owner)
 
-| ID | Conflict or decision | Documents |
+| ID | Conflict or decision | Status |
 | --- | --- | --- |
-| C1 | **Test framework:** System Architecture §2/§12 specifies Vitest + Playwright, but the existing database suites use Node's built-in `node:test`. Neither Vitest nor Playwright is installed | System Architecture v1.1; `package.json` |
-| C2 | **API style:** System Architecture §11 specifies versioned Route Handlers (`/api/v1/...`); the proposed auth design uses Server Actions for forms | System Architecture v1.1; §5, §7.2 |
-| C3 | **Password hashing on Workers Free** (§8) | PRD §3.1; System Architecture §3.1, §8 |
-| C4 | **Configuration module / dependency injection** required by AGENTS.md is not yet designed | AGENTS.md; §5 |
-| C5 | Rate-limit storage (database table or Cloudflare rule) | System Architecture §8 |
-| C6 | Worker bundle size limit (sources conflict) | §2 |
+| C1 | Test framework (System Architecture §2/§12 vs `node:test`) | **Resolved** 2026-11-25 by A15 |
+| C2 | API style (versioned Route Handlers vs Server Actions) | **Resolved** 2026-11-25 by A16 |
+| C3 | Password hashing on Workers Free | **Resolved** 2026-11-25 by A19 (hosting split); provider validation pending |
+| C4 | Configuration module / dependency injection | **Resolved** 2026-11-25 by A17 |
+| C5 | Rate-limit storage | **Resolved** 2026-11-25 by A18 |
+| C6 | Worker bundle size limit (sources conflict) | Open; measure with `wrangler deploy --dry-run` at deployment |
+| C7 | Auth Node host: commercial-use terms, reliability, cold starts, memory (≥ ~32 MiB per concurrent hash) and the trusted client-IP header | Open; deployment milestone (§2.2) |
 
 ## 11. Redirects for removed documents
 
@@ -416,6 +485,7 @@ These files were consolidated into the baseline documents on 2026-11-25. Older r
 | `docs/Financial_Posting_Rules.md` (cited in migrations 0001/0005 and `src/db/sql/financial-*.sql`; System Architecture §"Database hardening implementation note"; ERD §18) | §4 |
 | `docs/Shipment_Tracking.md` (System Architecture note; ERD §18) | §4.7 |
 | `docs/Better_Auth_Compatibility.md`, `Better_Auth_Compatibility_Review.md` (ERD §3; System Architecture note) | §3.2, §8 |
+| `tests/fixtures/better-auth-1.6.3.json` (removed 2026-11-25; its four core models are identical in the replacement) | `tests/fixtures/better-auth-1.7.25.json`, §8 |
 | `docs/Cloudflare_Compatibility_Review.md` | §2, §8 |
 | `docs/Authentication_and_Tenant_Security_Plan.md` | §5, §7.2 |
 | `docs/Database_Schema_Audit.md`, `Financial_Hardening_Review.md`, `Integrity_Followup_Review.md` | §3, §4, §9 |

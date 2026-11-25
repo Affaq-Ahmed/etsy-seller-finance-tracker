@@ -22,7 +22,8 @@ for (const config of configs) {
   const names = [config.name, ...config.indexes.map(i => i.config.name), ...config.checks.map(c => c.name)];
   for (const name of names) assert(Buffer.byteLength(name) <= 63, `Postgres identifier truncation: ${name}`);
   const tenant = config.columns.find(c => c.name === 'account_id');
-  if (!['user', 'session', 'account', 'verification', 'business_accounts'].includes(config.name)) {
+  // Auth-owned tables (Better Auth, including 0009 rate_limit) and the tenant root carry no tenant.
+  if (!['user', 'session', 'account', 'verification', 'rate_limit', 'business_accounts'].includes(config.name)) {
     assert(tenant?.notNull, `${config.name} must have a non-null tenant`);
     assert(config.foreignKeys.some(fk => {
       const r = fk.reference();

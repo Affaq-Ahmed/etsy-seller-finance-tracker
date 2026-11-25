@@ -64,6 +64,13 @@
       "when": 1795540846217,
       "tag": "0008_deposit_reconciliation_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795629520635,
+      "tag": "0009_auth_rate_limit",
+      "breakpoints": true
     }
   ]
 }

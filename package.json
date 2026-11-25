@@ -13,26 +13,39 @@
     "db:check": "drizzle-kit check",
     "test:db:offline": "node --test tests/offline-schema.test.cjs",
     "test:db:integration": "node --test tests/integration/financial-integrity.test.cjs",
-    "test:db:concurrency": "node --test tests/integration/concurrency.test.cjs"
+    "test:db:concurrency": "node --test tests/integration/concurrency.test.cjs",
+    "test:app": "vitest run",
+    "test:app:unit": "vitest run tests/app/unit",
+    "test:app:db": "vitest run tests/app/db"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.25",
     "@next/env": "16.4.6",
+    "better-auth": "1.7.25",
     "dotenv": "^16.6.1",
-    "drizzle-orm": "^0.44.7",
+    "drizzle-orm": "0.45.4",
     "next": "16.4.6",
-    "postgres": "^3.4.9",
+    "postgres": "3.4.9",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "drizzle-kit": "^0.30.6",
+    "drizzle-kit": "0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite": "7.3.8",
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "@better-auth/core": "1.7.25",
+    "better-call": "1.4.5",
+    "vite": "$vite"
   }
 }

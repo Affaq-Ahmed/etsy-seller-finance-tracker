@@ -6,30 +6,37 @@ This is the baseline development document: setup, environment variables, command
 
 ## 1. Prerequisites
 
-- **Node.js ≥ 20.9** (the Next.js 16 engine requirement) and npm.
-- **Docker** with the `postgres:18` image, needed only for the database integration and concurrency suites. All tooling is free and open source; no paid services are needed.
+- **Node.js ≥ 20.19** (Vite 7.3.8 requires `^20.19 || >=22.12`; Next.js 16 needs ≥ 20.9) and npm. Verified on Node 26.10.0.
+- **Docker** with the `postgres:18` image, needed only for the database-backed suites. All tooling is free and open source; no paid services are needed.
 - Work only from a trusted machine (AGENTS.md, "Environment and Security Safety").
 
 ## 2. Setup
 
 ```bash
-npm ci    # install exactly from package-lock.json
+npm ci --ignore-scripts --userconfig /dev/null    # exactly from package-lock.json
 ```
 
+- No dependency needs an install script. The tree was installed and verified this way on 2026-11-25.
+- `--userconfig /dev/null` keeps any npm token in `~/.npmrc` from being sent; public packages need no token.
+- `npm ls --all` must exit 0.
+
 If it does not exist yet, create a root `.env.local` and add the variables from §3 that you need. Never overwrite an existing one. `.env*` files are git-ignored (`.gitignore`). Never commit them, print their values, or paste secrets into docs, logs or issues.
+
+To run the app locally (`npm run dev`), `DATABASE_URL` must point at a local PostgreSQL that has migrations 0000–0009 applied. Never point it at Neon or production without explicit owner authorization. The disposable test container (§5.4) is for tests only.
 
 ## 3. Environment variables (names only)
 
 | Name | Used by | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | `drizzle.config.ts` (application database) | Loaded with Next.js precedence via `@next/env` (`.env.local` and the shell). It is optional for offline `db:generate`/`db:check`. **Tests never read it.** Do not point local work at Neon or production without explicit owner authorization for that specific operation. |
-| `LOCAL_TEST_DATABASE_URL` | Integration and concurrency suites, `drizzle.local-test.config.ts`, `scripts/verify-local-db.cjs` | Set automatically by `scripts/local-db.cjs run`. Must be `localhost`, `127.0.0.1` or `[::1]`; the database name must match `etsy_finance_test_[a-z0-9_]+`; query strings and fragments are rejected. |
+| `DATABASE_URL` | Application runtime (`src/server/config/env.ts`) and `drizzle.config.ts` | Must be a `postgres://` or `postgresql://` URL. Loaded with Next.js precedence (`.env.local` and the shell). Optional for offline `db:generate`/`db:check`. The test suites never read the developer's value: the only test that sets it (`tests/app/db/api-routes.test.ts`, route files) sets it to the validated disposable test URL for that file and restores it afterwards. Do not point local work at Neon or production without explicit owner authorization for that specific operation. |
+| `LOCAL_TEST_DATABASE_URL` | All database-backed suites (`node:test` and Vitest `tests/app/db`), `drizzle.local-test.config.ts`, `scripts/verify-local-db.cjs` | Set automatically by `scripts/local-db.cjs run`. Must be `localhost`, `127.0.0.1` or `[::1]`; the database name must match `etsy_finance_test_[a-z0-9_]+`; query strings and fragments are rejected. |
 | `LOCAL_TEST_DATABASE_DISPOSABLE` | Same as above | Must be `yes`. Set by the runner. |
-| `NODE_ENV` | Next.js, `drizzle.config.ts` | Standard. |
-| `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | *Planned* (auth not implemented) | Server-only. The secret must be at least 32 random bytes. |
+| `NODE_ENV` | Next.js, `drizzle.config.ts`, config module | `development` (default), `production` or `test`. |
+| `BETTER_AUTH_SECRET` | Better Auth (cookie signing) | Server-only. At least 32 characters of random data (e.g. 32 random bytes hex-encoded). A per-run random value is generated in tests. |
+| `BETTER_AUTH_URL` | Better Auth `baseURL`/`trustedOrigins`; the app's same-origin check | The public application origin only (scheme, host, optional port; no path, query or credentials). **https is required when `NODE_ENV=production`.** With option B (ARCHITECTURE.md §2.2) this is the Worker's origin, not the auth host's. |
 | `HYPERDRIVE` (Workers binding) | *Planned* (deployment not implemented) | See ARCHITECTURE.md §2.1. |
 
-AGENTS.md requires a configuration module that validates required variables at startup. It is not built yet (ARCHITECTURE.md C4).
+**Validation.** `src/server/config/env.ts` validates these variables, and `src/instrumentation.ts` runs that validation when a Node server starts. Startup fails with a `ConfigError` listing the variable **names** that are missing or invalid, never their values. `next build` skips the check, so builds need no secrets.
 
 ## 4. Commands
 
@@ -45,6 +52,8 @@ AGENTS.md requires a configuration module that validates required variables at s
 | `npm run test:db:offline` | 8 offline checks (§5.1). |
 | `npm run test:db:integration` | 71 PostgreSQL cases (§5.2). Every case is skipped without a test database. |
 | `npm run test:db:concurrency` | 12 two-session concurrency cases (§5.3). |
+| `npm run test:app` | All 156 Vitest application cases (§5.6). Without a test database the 73 database-backed cases are **skipped** and the 83 unit cases run. |
+| `npm run test:app:unit` / `npm run test:app:db` | Only `tests/app/unit` (83) or only `tests/app/db` (73; run through the local runner). |
 | `node scripts/audit-schema.cjs` | Offline audit: FK targets and ordering, tenant roots, identifier lengths, maintained-SQL parity, frozen hashes. |
 | `node scripts/audit-env.cjs` | Offline check of the `drizzle.config.ts` environment precedence (synthetic values only). |
 | `node scripts/verify-local-db.cjs` | Runtime catalog and migration-ledger verification (run through the local runner). |
@@ -53,13 +62,13 @@ AGENTS.md requires a configuration module that validates required variables at s
 
 ## 5. Testing
 
-The database suites use Node's built-in test runner and the existing `postgres` driver, with no extra test libraries. The System Architecture specifies Vitest + Playwright for application tests; this is not yet resolved (ARCHITECTURE.md C1).
+The database integrity suites use Node's built-in test runner and the `postgres` driver. Application tests use **Vitest 4.1.12** (ARCHITECTURE.md A15, §5.6). Playwright is deferred to the frontend phase.
 
 ### 5.1 Offline suite (`tests/offline-schema.test.cjs`)
 
 1. The migration chain has valid tenant and unique targets, correct ordering, and frozen historical hashes.
 2. Next.js environment precedence and credential-free generation.
-3. The Better Auth 1.6.3 field manifest (`tests/fixtures/better-auth-1.6.3.json`) matches the Drizzle auth models.
+3. The Better Auth field manifest for the **pinned** version (`tests/fixtures/better-auth-1.7.25.json`, including `rateLimit`) matches the Drizzle auth models. The test fails if `package.json` pins a different version.
 4. Shipment ownership FKs are restrictive, and multiple shipments per order are allowed.
 5. Reversal references include tenant and currency, with one reversal per original.
 6. Posting legs use exact decimals and tenant/currency FKs.
@@ -94,6 +103,7 @@ node scripts/local-db.cjs run npm run db:migrate -- --config=drizzle.local-test.
 node scripts/local-db.cjs run node scripts/verify-local-db.cjs
 node scripts/local-db.cjs run npm run test:db:integration
 node scripts/local-db.cjs run npm run test:db:concurrency
+node scripts/local-db.cjs run npm run test:app
 node scripts/local-db.cjs stop       # removes the container, credentials and state file
 ```
 
@@ -101,23 +111,40 @@ node scripts/local-db.cjs stop       # removes the container, credentials and st
 - **What `run` does.** It verifies the container label and name and the URL rules, removes `DATABASE_URL` from the child environment, and injects only the test connection.
 - **Config isolation.** `drizzle.local-test.config.ts` loads neither dotenv nor `.env.local`.
 - **Cold start.** `pg_isready` can succeed against the image's temporary init server. Before migrating, confirm that `docker logs <container>` shows `PostgreSQL init process complete`.
-- **Expected `verify-local-db.cjs` result:** 39 tables, 20 enums, 83 FKs, 135 indexes, 19 functions, 53 triggers, 9 migrations, with hashes and order verified.
+- **Expected `verify-local-db.cjs` result (through 0009):** 40 tables, 20 enums, 83 FKs, 137 indexes, 19 functions, 53 triggers, 10 migrations, with hashes and order verified.
 - Never use Neon, production or a retained database for tests. Never point a local proxy or tunnel at a remote database.
 
 ### 5.5 Check order (AGENTS.md "Testing and Definition of Done")
 
-1. `npx tsc --noEmit`
+1. `npx tsc --noEmit` (covers `src` and `tests/app`)
 2. `npm run lint`
-3. Targeted tests
-4. `npm run test:db:offline`, then integration and concurrency through the runner when the database or posting logic is touched
-5. The full suite and coverage (not configured yet)
-6. `npm run build` (or `-- --webpack`)
+3. Targeted tests (`npm run test:app:unit`, or a single `npx vitest run <file>`)
+4. `npm run test:db:offline`, then integration, concurrency and `test:app` through the runner
+5. The full suite. **Coverage is not configured**: it would need `@vitest/coverage-v8`, which is not an approved dependency.
+6. `npm run build` (or `-- --webpack`). The build needs no environment variables.
 
 Report actual results. If a check cannot run, say why and mark the task partially verified.
 
+### 5.6 Application suite (Vitest, `tests/app/`)
+
+- **Config:** `vitest.config.ts`.
+  - `@/` resolves to `src/`, and `server-only` is aliased to a no-op stub.
+  - Files run sequentially, because the database files share one disposable database and observe real lock waits.
+  - `NODE_ENV=test`; the auth configuration explicitly keeps Better Auth's origin and CSRF checks and rate limiting on (ARCHITECTURE.md §8).
+- **Unit (83, no database):** config validation, HTTP layer (origin, errors, bodies, no-store), transaction retry, the auth policy as effective at runtime, the auth log sink, page-guard decisions, onboarding rules and the starter chart, and the static guards (T16–T18).
+- **Database-backed (73):** `describe.skipIf` without `LOCAL_TEST_DATABASE_URL`, so they run only through `scripts/local-db.cjs run`.
+  - Files: `auth-flows`, `tenant-isolation`, `onboarding`, `origin-csrf`, `rate-limit` and `api-routes` (including the real `src/app/api/**/route.ts` files through the composition root).
+  - Better Auth is driven through its HTTP handler (`tests/app/support/app.ts`), so origin checks and rate limits behave as in production. Each call uses a fresh documentation-range client IP, so only the rate-limit tests share a bucket.
+  - Data stays in the disposable database, which is destroyed by `stop`.
+- The T1–T19 matrix and the file that covers each case are in ARCHITECTURE.md §7.2.
+
 ## 6. Migration workflow
 
-**Migrations `0000–0008` are frozen.** Never edit, reorder or regenerate them, and never use `push`. All changes go in new forward-only migrations (`0009+`).
+**Migrations `0000–0009` are frozen.** Never edit, reorder or regenerate them, and never use `push`. All changes go in new forward-only migrations (`0010+`). `tests/baseline-migrations.json` holds 20 SHA-256 values (SQL and snapshot for each of 0000–0009); `scripts/audit-schema.cjs` and the offline suite fail if any of them changes.
+
+**0009 (`0009_auth_rate_limit`, added and frozen 2026-11-25, ARCHITECTURE.md A24)** creates only the auth-owned `rate_limit` table and its unique `key` index (ARCHITECTURE.md §3, A18). It was validated on a fresh database: full chain, replay no-op, catalog counts, all suites, `drizzle-kit check` and "No schema changes".
+- `scripts/audit-schema.cjs` lists `rate_limit` with the other non-tenant auth tables.
+- drizzle-kit 0.31 writes snapshot keys in a different nested order than 0.30. Compared with keys canonically sorted, `0009_snapshot.json` differs from `0008_snapshot.json` only by the new table.
 
 ### 6.1 Maintained SQL sources and required parity
 
@@ -144,9 +171,9 @@ The frozen SQL comments cite `docs/Financial_Posting_Rules.md`. That content is 
 
 ## 7. Dependency upgrades
 
-Upgrade only with owner approval. Pin exact versions and install with `npm ci`. For the proposed auth stack (ARCHITECTURE.md §8), verify:
+Upgrade only with owner approval. Before installing, recheck the target versions against the GitHub advisory database and the npm registry (deprecation, peer ranges). Pin exact versions, install with `--ignore-scripts --userconfig /dev/null`, and report any version change npm proposes; never accept one silently. The current pinned set and the reasons for the `overrides` are in ARCHITECTURE.md §8 (A21). Verify:
 
-1. `npm ls better-auth @better-auth/drizzle-adapter drizzle-orm drizzle-kit postgres next` shows exact versions and no `invalid`/`ERESOLVE`; `npm audit --omit=dev` is clean for auth.
+1. `npm ls --all` exits 0 (no `invalid`, `missing` or `ERESOLVE`), and there is exactly one copy each of `@better-auth/core` and `better-call`. `npm audit --omit=dev` reports nothing for the auth packages. The 4 moderate pre-existing drizzle-kit/esbuild 0.18 findings are documented in ARCHITECTURE.md §8.
 2. `npm run test:db:offline` passes (frozen hashes intact).
 3. **The no-drift gate:** `drizzle-kit check` passes and `drizzle-kit generate --name=verify_no_drift` reports no changes, both through the local-test config. `git status` must show **no** changes under `drizzle/`. If the kit wants to rewrite snapshots or the journal, stop and escalate.
 4. A fresh-database replay plus `verify-local-db.cjs` counts.
@@ -159,13 +186,23 @@ Upgrade only with owner approval. Pin exact versions and install with `npm ci`. 
 
 | Path | Contents |
 | --- | --- |
-| `src/app/` | Next.js App Router (scaffold only) |
+| `src/app/` | App Router: `/sign-up`, `/sign-in`, `/onboarding`, `/app` (placeholder home); `api/auth/[...all]` (Better Auth), `api/v1/onboarding`, `api/v1/business` |
+| `src/server/` | Server-only code: `config/`, `db/`, `dal/`, `auth/`, `http/`, `onboarding/`, `business/`, `api/`, `container.ts` (ARCHITECTURE.md §5) |
+| `src/components/`, `src/lib/` | Minimal accessible Tailwind forms; the Better Auth browser client, shared paths and the policy limits used by both forms and server validation |
+| `src/instrumentation.ts` | Startup configuration validation |
 | `src/db/schema.ts`, `src/db/auth-schema.ts` | Drizzle schema; Better Auth model mapping |
 | `src/db/sql/` | Maintained custom SQL sources (§6.1) |
-| `drizzle/`, `drizzle/meta/` | Migrations 0000–0008, snapshots, journal |
+| `drizzle/`, `drizzle/meta/` | Migrations 0000–0009, snapshots, journal |
 | `drizzle.config.ts` / `drizzle.local-test.config.ts` | Application config / isolated test config |
+| `vitest.config.ts` | Application test config (§5.6) |
 | `scripts/` | Local database runner, offline audits, catalog verifier |
-| `tests/` | Offline, integration and concurrency suites; fixtures; helpers; frozen hash manifest |
+| `tests/` | `node:test` offline, integration and concurrency suites; `tests/app/` Vitest suites and support; fixtures; helpers; frozen hash manifest |
+
+**Conventions added in this milestone:**
+- Every `src/server/**` module (except pure types and helpers) imports `server-only`.
+- Only `src/db`, `src/server/{db,dal,auth}` and `src/server/container.ts` may import the database. ESLint and the static guards enforce this.
+- API routes use `sessionRoute`/`tenantRoute`; public routes and pages carry a `// public: <reason>` comment.
+- No cache directives on session or tenant paths.
 
 ## 9. Conventions and Git
 

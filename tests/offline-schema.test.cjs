@@ -21,9 +21,12 @@ test('Next environment precedence and credential-free generation',()=>{
   const result=spawnSync(process.execPath,['scripts/audit-env.cjs'],{encoding:'utf8'});
   assert.equal(result.status,0,result.stderr || result.stdout);
 });
-test('Better Auth 1.6.3 verified field manifest matches current Drizzle models',()=>{
-  const manifest=require('./fixtures/better-auth-1.6.3.json');
-  const models={user:schema.users,session:schema.sessions,account:schema.authAccounts,verification:schema.verifications};
+test('Better Auth 1.7.25 verified field manifest matches current Drizzle models',()=>{
+  const manifest=require('./fixtures/better-auth-1.7.25.json');
+  const pinned=require('../package.json').dependencies['better-auth'];
+  assert.equal(manifest.version,pinned,'Regenerate the Better Auth field manifest for the pinned version');
+  const models={user:schema.users,session:schema.sessions,account:schema.authAccounts,verification:schema.verifications,rateLimit:schema.rateLimits};
+  assert.deepEqual(Object.keys(manifest.tables).sort(),Object.keys(models).sort(),'Auth model set changed');
   for(const [model,fields] of Object.entries(manifest.tables)) {
     const table=models[model]; assert(table,`Missing auth model ${model}`);
     const config=getTableConfig(table);
@@ -31,6 +34,7 @@ test('Better Auth 1.6.3 verified field manifest matches current Drizzle models',
       const actual=table[field]; assert(actual,`Missing ${model}.${field}`);
       if(expected.required) assert(actual.notNull || actual.primary,`${model}.${field} must be required`);
       assert.equal(actual.dataType, {string:'string',boolean:'boolean',date:'date',number:'number'}[expected.type],`${model}.${field} type`);
+      if(expected.bigint) assert.equal(actual.getSQLType(),'bigint',`${model}.${field} must be bigint`);
       if(expected.unique) assert(actual.primary || actual.isUnique || config.indexes.some(i=>i.config.unique && i.config.columns.length===1 && i.config.columns[0].name===actual.name),`${model}.${field} unique`);
     }
   }

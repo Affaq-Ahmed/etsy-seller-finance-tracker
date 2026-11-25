@@ -1,7 +1,8 @@
 {
-  "version": "1.6.3",
-  "source": "https://registry.npmjs.org/@better-auth/core/-/core-1.6.3.tgz",
-  "drizzleAdapterSource": "https://registry.npmjs.org/@better-auth/drizzle-adapter/1.6.3",
+  "version": "1.7.25",
+  "source": "https://registry.npmjs.org/@better-auth/core/-/core-1.7.25.tgz",
+  "drizzleAdapterSource": "https://registry.npmjs.org/@better-auth/drizzle-adapter/1.7.25",
+  "generatedWith": "getAuthTables({ rateLimit: { storage: \"database\" } }) from the installed @better-auth/core@1.7.25",
   "tables": {
     "user": {
       "id": {
@@ -176,9 +177,28 @@
         "required": true,
         "unique": false
       }
+    },
+    "rateLimit": {
+      "id": {
+        "type": "string",
+        "required": true
+      },
+      "key": {
+        "type": "string",
+        "required": true,
+        "unique": true
+      },
+      "count": {
+        "type": "number",
+        "required": true,
+        "unique": false
+      },
+      "lastRequest": {
+        "type": "number",
+        "required": true,
+        "unique": false,
+        "bigint": true
+      }
     }
-  },
-  "coreArtifactSha256": "38eae9a355db8e0d29f94f9ba67c9b002ce8463e3d5a06aa5521e42b793b1dca",
-  "adapterArtifactSha256": "dcd1ad58c2b4a355be346852beb63cd4e109eb508a7ed4b756fcbd330c69a0d3",
-  "adapterDrizzlePeer": ">=0.41.0"
+  }
 }

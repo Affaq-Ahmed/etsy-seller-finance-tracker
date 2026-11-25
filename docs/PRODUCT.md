@@ -8,7 +8,7 @@ This is the baseline product document: scope, user journeys, business and financ
 
 ## Source-of-truth hierarchy
 
-1. **Implemented database constraints:** `src/db/schema.ts`, migrations `drizzle/0000–0008` and their tests are authoritative for what the database enforces.
+1. **Implemented database constraints:** `src/db/schema.ts`, migrations `drizzle/0000–0009` and their tests are authoritative for what the database enforces.
 2. **Baseline documents:** `PRODUCT.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, `STATUS.md`.
 3. **Owner reference specifications**, kept unchanged as originally provided:
    - [PRD v1.2](PRD.md) (2026-11-23): the complete V1 requirements.
@@ -61,7 +61,7 @@ V1 is the complete PRD v1.2 scope, delivered in phases (PRD §10). The summary b
 
 These are derived from PRD v1.2 (the §10 success criterion and §3). The screens and flows themselves are not yet designed.
 
-1. **Register and onboard.** Sign up with email and password, create the single business (shop) and get a working set of financial accounts. *The onboarding design is proposed in ARCHITECTURE.md §7 and is pending approval.*
+1. **Register and onboard.** Sign up with email and password, sign in, then create the single business (shop) and get a working set of financial accounts. *Implemented 2026-11-25 (ARCHITECTURE.md §7.2).* Sign-up never signs the user in, so a duplicate registration reveals nothing.
 2. **Record an order.** Enter the Etsy Order ID, net payable amount, currency, items and quantities, and optionally link products.
 3. **Buy from a supplier.** Record a supplier purchase against the order's items, then **confirm** it. Costs count toward profit only after confirmation.
 4. **Ship and deliver.** Add one or more manual shipments and append status events. Separately, confirm order-level delivery.
@@ -146,13 +146,16 @@ Changing any of these needs owner approval and an update to this document and/or
 | 2026-11-24 | Adjustments against an already reversed journal are rejected | Owner-requested integrity follow-up (migration 0007) |
 | 2026-11-24 | Negative non-deposit Payoneer transactions must not hit the reconciliation cap | Reproduced defect, fixed in migration 0008 |
 | 2026-11-25 | The repository is public; the owner accepted publishing these documents | Owner |
+| 2026-11-25 | **D1 resolved:** email and password with Better Auth's default secure hashing (work factor unchanged) stay. Authentication runs on separate free Node compute behind the Worker proxy; the provider is chosen and validated at deployment. PRD §3.1 is unchanged | Owner (ARCHITECTURE.md A19) |
+| 2026-11-25 | Sign-up is enumeration-resistant (generic response, no auto sign-in). **Accepted limitation:** an email can still be tested through the sign-in flow until email verification exists (D2) | Owner (ARCHITECTURE.md A20) |
+| 2026-11-25 | Onboarding creates the starter chart **without** a REFUND account until D5 is decided; payout settings default to 14 days and Monday | Owner (ARCHITECTURE.md A22) |
 
 ## 9. Open product decisions
 
 | # | Decision needed | Why it matters |
 | --- | --- | --- |
-| D1 | **Sign-in method if secure password hashing cannot run on Workers Free** (passkeys, email codes, or a hosting change) | Could change PRD §3.1. See ARCHITECTURE.md §8 |
-| D2 | A free email provider for password reset and verification | PRD §3.1 makes reset conditional on free email |
+| D1 | ~~Sign-in method if secure password hashing cannot run on Workers Free~~ | **Resolved 2026-11-25** (decision log above) |
+| D2 | A free email provider for password reset and verification | PRD §3.1 makes reset conditional on free email. Also needed to close the remaining account-enumeration gap (ARCHITECTURE.md §7.2) |
 | D3 | **Currency rounding rules** and the precision used for conversion and reporting | Still undefined (ERD §17 item 3); needed before any FX calculation |
 | D4 | Whether bank fees are deducted before or after conversion in realized-FX reporting | Changes realized-rate figures |
 | D5 | Which REFUND representation (contra-revenue or expense) new businesses use by default | Starter chart of accounts at onboarding |

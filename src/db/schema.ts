@@ -1,5 +1,5 @@
 import {
-  pgTable, pgEnum, uuid, text, varchar, boolean, integer, numeric,
+  pgTable, pgEnum, uuid, text, varchar, boolean, integer, bigint, numeric,
   timestamp, date, jsonb, index, unique, uniqueIndex, check, foreignKey
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -92,6 +92,17 @@ export const verifications = pgTable('verification', {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [index('verification_identifier_idx').on(t.identifier)]);
+
+// Better Auth database-backed rate limiting (migration 0009). Auth-owned and
+// not tenant-scoped, like the four tables above. Shape matches Better Auth
+// 1.7.25's generated Drizzle model: `last_request` is epoch milliseconds and
+// the unique `key` ("<ip>|<path>") backs its atomic conditional increments.
+export const rateLimits = pgTable('rate_limit', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull(),
+  count: integer('count').notNull(),
+  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+}, (t) => [uniqueIndex('rate_limit_key_uq').on(t.key)]);
 
 // Tenant root. `business_accounts` avoids collision with Better Auth's `account`.
 export const businessAccounts = pgTable('business_accounts', {
