@@ -33,6 +33,7 @@ If it is unclear which document applies, read all four baseline documents.
 Cross-check relevant documents and existing code.
 
 If you find:
+
 - conflicting requirements,
 - conflicting financial semantics,
 - a mismatch between architecture and schema,
@@ -54,7 +55,7 @@ For substantial tasks, end the plan with:
 
 > Does this align with the project requirements and architecture, and do I have your approval to begin implementation?
 
-Wait for explicit approval such as **“Yes”, “Approved”, or “Proceed”** before coding. Do not treat unrelated responses as approval.
+Wait for explicit approval such as **"Yes", "Approved", or "Proceed"** before coding. Do not treat unrelated responses as approval.
 
 For small, clearly specified maintenance tasks that do not affect architecture, financial behavior, security, schema, or dependencies, you may proceed after a brief plan unless the owner asks for approval-first workflow.
 
@@ -106,6 +107,7 @@ Do not reinterpret or change these rules without owner approval and an update to
 ## No Hardcoding
 
 Do not hardcode:
+
 - Secrets, credentials, API keys, or tokens.
 - Environment-specific URLs or configuration.
 - Configuration values that belong in environment/configuration management.
@@ -126,7 +128,7 @@ Use the configuration module and injected configuration service as defined by `d
 
 ## Database and Migration Rules
 
-- Migrations `0000–0008` are frozen and must not be edited, reordered, or regenerated.
+- Migrations `0000–0009` are frozen and must not be edited, reordered, or regenerated. Their SQL and snapshot SHA-256 values are recorded in `tests/baseline-migrations.json`.
 - Never use `drizzle-kit push`.
 - All future schema changes must use new forward-only migrations.
 - Review migration SQL carefully, including constraints, indexes, foreign keys, triggers, and rollback implications.
@@ -172,6 +174,7 @@ Do not assume a command exists; inspect `package.json`. Do not invent test resul
 Fix all unsafe TypeScript lint errors in files you touched. Do not defer them.
 
 A task is complete only when:
+
 - The approved behavior is implemented.
 - Relevant tests pass or failures are explicitly reported.
 - Tenant and financial integrity are preserved.
@@ -187,10 +190,13 @@ Update these files instead:
 
 1. `docs/PRODUCT.md`
    - Product scope, user journeys, business rules, financial rules, acceptance criteria, and product decisions.
+
 2. `docs/ARCHITECTURE.md`
    - Architecture, data flows, security, deployment decisions, and a dated decision log.
+
 3. `docs/DEVELOPMENT.md`
    - Local setup, environment variable names (never values), commands, conventions, testing, and migration workflow.
+
 4. `docs/STATUS.md`
    - Current milestone, completed work, verification results, blockers, and next tasks.
 
@@ -205,7 +211,7 @@ Only create another document when the owner explicitly requests it or when a gen
 - Check for secrets, `.env*`, local reports, generated artifacts, and unrelated changes.
 - Use clear, concise conventional commit messages.
 - **Never add co-author tags or co-author trailers, including `Co-authored-by:`.**
-- Do not add “Generated with Claude Code”, Claude attribution, AI/agent attribution, or similar metadata to commits, PRs, changelogs, or generated files unless the owner explicitly requests it.
+- Do not add "Generated with Claude Code", Claude attribution, AI/agent attribution, or similar metadata to commits, PRs, changelogs, or generated files unless the owner explicitly requests it.
 - Do not amend published commits or rewrite history without explicit approval.
 
 ## Environment and Security Safety
@@ -228,3 +234,42 @@ At the end of each task, report concisely:
 - The next recommended task, if useful.
 
 Do not create a separate handoff document. Record durable progress in `docs/STATUS.md` and durable decisions in `docs/ARCHITECTURE.md`.
+
+## Agent Roster and Agentic Workplan
+
+For substantial feature work, use the following six-agent workflow. Assign the specified model and reasoning effort to each role when available. Do not silently substitute a different model; if unavailable, tell the owner and request a choice.
+
+| Agent | Model / Effort | Responsibility |
+|---|---|---|
+| Planner | Opus 5.5, Extra High | Inspect requirements, docs, schema, code and tests; create a scoped implementation plan. |
+| Documentation Reviewer | Opus 5.5, High | Independently challenge the plan against the baseline documents and this file. |
+| Implementation Agent | Sonnet 5.5, High | Implement only the approved plan; sole repository writer during implementation. |
+| Code Reviewer | Opus 5.5, High | Independently review the actual diff for correctness, security, financial integrity and maintainability. |
+| QA / Tester | Sonnet 5.5, High | Independently exercise APIs, database effects and UI flows; report reproducible defects. |
+| Git / Release Agent | Sonnet 5.5, Medium | Commit and push approved changes, pull the latest `main` into the feature branch, resolve conflicts if safe, rerun relevant checks, and push the updated feature branch. |
+
+### Agent Sequence
+
+1. **Plan:** The Planner produces a scoped plan with document references, files to touch, logic, transaction boundaries, security considerations, tests, migration assessment, risks and unresolved decisions. No code changes.
+2. **Plan review:** The Documentation Reviewer checks the plan against `AGENTS.md`, the baseline documents, and relevant schema/tests. Resolve conflicts explicitly. Ask the owner only when a genuine product, accounting, architecture or safety decision is missing.
+3. **Approval:** Wait for explicit owner approval before implementation of any substantial feature.
+4. **Implement:** The Implementation Agent is the sole repository writer. Implement only approved scope, add/update tests, and update baseline documentation. No unrelated refactors.
+5. **Code review:** The Code Reviewer inspects the actual diff, not just the implementation summary. Findings must include severity, file/location and rationale. The implementation agent fixes blocking findings; the reviewer re-checks fixes.
+6. **QA:** The QA / Tester independently tests the implemented feature through actual API requests and UI workflows, verifies persisted database and ledger effects, and checks regression, authorization, validation, idempotency, rollback and concurrency as relevant. The tester must not modify implementation code.
+7. **Fix and retest:** Defects return to the Implementation Agent. The Code Reviewer and Tester re-check the fixes in their respective areas.
+8. **Git integration:** After code review and QA pass, and the owner has authorized the Git operations, the Git / Release Agent:
+   - Inspects the complete diff and confirms only approved files are included.
+   - Creates a commit using the repository's commit conventions.
+   - Pushes the feature branch.
+   - Pulls the latest `main` into the feature branch, preserving the feature branch workflow.
+   - Resolves conflicts only when the correct resolution is clear from approved requirements. Otherwise, stops and asks the owner.
+   - Reruns relevant tests after integrating `main`.
+   - Pushes the updated feature branch.
+   - Reports the commit hash, branch, commands performed, test results and any conflicts.
+9. **Report:** Provide a concise completion report with plan/review findings, files changed, test commands and actual results, API/UI evidence, Git operations performed, unresolved limitations, risks and documentation updates.
+
+Only one agent may write to the repository at a time. Planning and review agents should not edit implementation files. Do not claim browser/UI testing was performed unless the actual UI was exercised. If browser automation is unavailable, test APIs and database effects and clearly mark UI testing as unverified.
+
+The Git / Release Agent must not merge the feature branch into `main`, create a PR, deploy, or run database migrations unless the owner explicitly authorizes that specific action.
+
+The existing environment/security gate remains mandatory. If the development machine or repository is not confirmed trusted, stop credential use, installations, Git network operations and deployment as required by the Environment and Security Safety section.
