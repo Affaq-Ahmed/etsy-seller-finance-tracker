@@ -9,6 +9,7 @@ import {
   STARTER_CHART,
 } from '@/server/onboarding/service';
 import { SHOP_NAME_MAX_LENGTH } from '@/lib/policy';
+import { SUPPLIER_PAYABLE_ACCOUNT_NAME } from '@/server/ledger/accounts';
 
 describe('onboarding input', () => {
   it('trims the shop name', () => {
@@ -51,12 +52,19 @@ describe('starter chart (ARCHITECTURE.md §7.2, owner decisions)', () => {
       'SUPPLIER_COST:BASE',
       'TRANSFER_CLEARING:PKR',
       'TRANSFER_CLEARING:USD',
+      'UNCLASSIFIED:BASE',
     ]);
   });
 
-  it('has no REFUND or UNCLASSIFIED account and no PKR expense accounts', () => {
-    expect(STARTER_CHART.some((spec) => spec.accountRole === 'REFUND' || spec.accountRole === 'UNCLASSIFIED')).toBe(false);
+  it('has no REFUND account and no PKR expense accounts', () => {
+    expect(STARTER_CHART.some((spec) => spec.accountRole === 'REFUND')).toBe(false);
     expect(STARTER_CHART.some((spec) => spec.accountType === 'EXPENSE' && spec.currency !== 'BASE')).toBe(false);
+  });
+
+  it('has exactly one role-less account: the Supplier Payable liability (ARCHITECTURE.md A25)', () => {
+    const unclassified = STARTER_CHART.filter((spec) => spec.accountRole === 'UNCLASSIFIED');
+    expect(unclassified).toEqual([{ name: 'Supplier Payable', accountType: 'LIABILITY', accountRole: 'UNCLASSIFIED', currency: 'BASE' }]);
+    expect(SUPPLIER_PAYABLE_ACCOUNT_NAME).toBe('Supplier Payable');
   });
 
   it('pairs every role with the account type the database check requires', () => {
@@ -64,7 +72,7 @@ describe('starter chart (ARCHITECTURE.md §7.2, owner decisions)', () => {
       if (assetRoles.includes(spec.accountRole)) expect(spec.accountType).toBe('ASSET');
       else if (expenseRoles.includes(spec.accountRole)) expect(spec.accountType).toBe('EXPENSE');
       else if (spec.accountRole === 'REVENUE') expect(spec.accountType).toBe('INCOME');
-      else throw new Error(`unexpected role ${spec.accountRole}`);
+      else expect(spec).toMatchObject({ accountRole: 'UNCLASSIFIED', accountType: 'LIABILITY' });
     }
   });
 

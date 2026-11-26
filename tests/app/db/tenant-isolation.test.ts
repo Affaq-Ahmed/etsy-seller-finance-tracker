@@ -10,6 +10,7 @@ import { listAccountSettings } from '@/server/dal/account-settings';
 import { listAuditLogs } from '@/server/dal/audit-logs';
 import { getTenantBusiness } from '@/server/dal/business-accounts';
 import { getPostgresErrorCode } from '@/server/db/errors';
+import { STARTER_CHART } from '@/server/onboarding/service';
 import { hasTestDatabase } from '../support/database';
 import { apiRequest, apiRoutes, createTestApp, registerAndOnboard, type OnboardedUser } from '../support/app';
 
@@ -35,7 +36,7 @@ describe.skipIf(!hasTestDatabase)('tenant isolation (T1–T5)', () => {
   describe('T1 cross-tenant SELECT', () => {
     it('lists only the session tenant rows', async () => {
       const accounts = await listFinancialAccounts(scopeOf(a));
-      expect(accounts).toHaveLength(10);
+      expect(accounts).toHaveLength(STARTER_CHART.length);
       expect(accounts.every((row) => row.accountId === a.tenant.accountId)).toBe(true);
       expect((await listAccountSettings(scopeOf(a))).every((row) => row.accountId === a.tenant.accountId)).toBe(true);
       expect((await listAuditLogs(scopeOf(a))).every((row) => row.accountId === a.tenant.accountId)).toBe(true);

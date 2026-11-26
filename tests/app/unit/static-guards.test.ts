@@ -69,6 +69,22 @@ describe('T17 static guards', () => {
     }
   });
 
+  it('the raw executor of a tenant scope is used only inside the DAL', () => {
+    for (const file of sourceFiles) {
+      const name = rel(file);
+      if (name.startsWith('src/server/dal/')) continue;
+      expect(/\.executor\b/.test(read(file)), `${name} reaches into scope.executor`).toBe(false);
+    }
+  });
+
+  it('every DAL query that uses the executor constrains each table with tenantEq or an explicit tenant predicate', () => {
+    for (const file of files(path.join(SRC, 'server', 'dal'), /\.ts$/)) {
+      const source = read(file);
+      if (!/scope\.executor/.test(source)) continue;
+      expect(/tenantEq\(|scope\.tenant\.accountId|\$\{tenant\}/.test(source), `${rel(file)} uses the executor without a tenant predicate`).toBe(true);
+    }
+  });
+
   it('TenantId values are created only by the session resolver', () => {
     for (const file of sourceFiles) {
       const name = rel(file);
@@ -121,11 +137,19 @@ describe('T16 tenant table coverage meta-test', () => {
     .map((config) => config.name)
     .sort();
 
-  // Tables this milestone exposes through the DAL, with their DAL module.
+  // Tables exposed through the DAL (M2 and Phase 2a), with their DAL module.
   const EXPOSED: Record<string, string> = {
     account_settings: 'src/server/dal/account-settings.ts',
     financial_accounts: 'src/server/dal/financial-accounts.ts',
     audit_logs: 'src/server/dal/audit-logs.ts',
+    suppliers: 'src/server/dal/suppliers.ts',
+    products: 'src/server/dal/products.ts',
+    orders: 'src/server/dal/orders.ts',
+    order_items: 'src/server/dal/order-items.ts',
+    supplier_purchases: 'src/server/dal/supplier-purchases.ts',
+    supplier_purchase_items: 'src/server/dal/supplier-purchase-items.ts',
+    journal_entries: 'src/server/dal/journal.ts',
+    journal_lines: 'src/server/dal/journal.ts',
   };
   const exportName = (tableName: string) => Object.entries(schema).find(([, value]) => is(value, Table) && getTableConfig(value as PgTable).name === tableName)?.[0];
 
@@ -134,7 +158,8 @@ describe('T16 tenant table coverage meta-test', () => {
   });
 
   it('every exposed tenant table has a DAL module and cross-tenant tests', () => {
-    const isolationTests = read(path.join(ROOT, 'tests/app/db/tenant-isolation.test.ts'));
+    const isolationDir = path.join(ROOT, 'tests/app/db');
+    const isolationTests = files(isolationDir, /isolation\.test\.ts$/).map(read).join('\n');
     for (const [table, dalModule] of Object.entries(EXPOSED)) {
       expect(tenantTables).toContain(table);
       const name = exportName(table);
@@ -147,7 +172,7 @@ describe('T16 tenant table coverage meta-test', () => {
 
   it('tables not yet exposed are imported by no application code', () => {
     const notExposed = new Set(tenantTables.filter((table) => !(table in EXPOSED)).map((table) => exportName(table)));
-    expect(notExposed.size).toBe(31);
+    expect(notExposed.size).toBe(23);
     for (const file of sourceFiles) {
       const name = rel(file);
       if (name.startsWith('src/db/')) continue;

@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, type SQL } from 'drizzle-orm';
+import { and, count, eq, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn, PgTable, PgUpdateSetSource, PgInsertValue } from 'drizzle-orm/pg-core';
 import type { DbExecutor } from '@/server/db/client';
 import type { TenantContext } from '@/server/auth/tenant-context';
@@ -38,6 +38,15 @@ function assertNoTenantKeys(values: object): void {
  */
 export interface TenantScope {
   readonly tenant: TenantContext;
+  /**
+   * The underlying executor, for DAL modules that need joins, ordering, row
+   * locks or aggregates. Every table in such a query must be constrained with
+   * `tenantEq(table)`. Only `src/server/dal/**` may use it
+   * (tests/app/unit/static-guards.test.ts).
+   */
+  readonly executor: DbExecutor;
+  /** `table.account_id = <session tenant>`. */
+  tenantEq(table: TenantTable): SQL;
   select<T extends TenantTable>(table: T, where?: SQL): Promise<TenantRow<T>[]>;
   insert<T extends TenantTable>(table: T, rows: readonly TenantInsert<T>[]): Promise<TenantRow<T>[]>;
   update<T extends TenantTable>(table: T, values: TenantUpdate<T>, where: SQL): Promise<TenantRow<T>[]>;
@@ -53,6 +62,8 @@ export function tenantScope(db: DbExecutor, tenant: TenantContext): TenantScope 
 
   return {
     tenant,
+    executor: db,
+    tenantEq: (table) => eq(table.accountId, tenant.accountId),
 
     async select<T extends TenantTable>(table: T, where?: SQL) {
       const rows = await db.select().from(table as PgTable).where(scoped(table, where));
@@ -80,4 +91,22 @@ export function tenantScope(db: DbExecutor, tenant: TenantContext): TenantScope 
       return deleted as TenantRow<T>[];
     },
   };
+}
+
+/** The first row of a result that must contain one (e.g. after INSERT ... RETURNING). */
+export function expectRow<T>(rows: readonly T[]): T {
+  const row = rows[0];
+  if (row === undefined) throw new Error('Expected a row from the database');
+  return row;
+}
+
+export interface PageRequest {
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/** COUNT of the session tenant's rows in `table`, optionally narrowed by `where`. */
+export async function countTenantRows(scope: TenantScope, table: TenantTable, where?: SQL): Promise<number> {
+  const [row] = await scope.executor.select({ value: count() }).from(table as PgTable).where(and(scope.tenantEq(table), where));
+  return row?.value ?? 0;
 }

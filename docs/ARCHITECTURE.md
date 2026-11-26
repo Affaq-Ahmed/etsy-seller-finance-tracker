@@ -41,7 +41,7 @@ The owner's reference specifications are [System Architecture v1.1](System_Archi
 
   Each module owns its services, schemas, repositories and validation. Business rules live in domain services, never directly in route handlers.
 - **Background jobs** (System Architecture §7): a PostgreSQL-backed queue (`background_jobs`, tenant-owned) dispatched by a single Cloudflare Cron Trigger. Jobs are idempotent, short and chunked. External job services are not allowed.
-- **Implementation state (2026-11-25):** the database layer (0000–0009), authentication, tenant resolution, onboarding and the tenant-scoped data access layer are implemented and verified locally (§5, §7.2, §8). No financial domain services, financial route handlers or financial UI exist yet.
+- **Implementation state (2026-11-26):** the database layer (0000–0009), authentication, tenant resolution, onboarding and the tenant-scoped data access layer (§5, §7.2, §8), plus **Phase 2a**: suppliers, products, orders, supplier purchases with atomic confirmation and reversal, and profit before expenses and refunds (§5.1). Payouts, Payoneer, withdrawals, expenses, refunds, shipments and reports are not built.
 
 ## 2. Deployment and runtime (System Architecture v1.1 §3, §13–15)
 
@@ -151,7 +151,7 @@ The frozen migrations 0001 and 0005 and `src/db/sql/financial-*.sql` refer to `d
 
 - **Asset roles:** `ETSY_RECEIVABLE`, `ETSY_PAYOUT_CLEARING`, `PAYONEER`, `BANK`, `TRANSFER_CLEARING`.
 - `SUPPLIER_COST`, `DIRECT_EXPENSE` and `SHARED_EXPENSE` require EXPENSE accounts. `REVENUE` requires INCOME.
-- `REFUND` may be an INCOME contra-revenue account or an EXPENSE account. Reports count a refund once in either representation.
+- `REFUND` may be an INCOME contra-revenue account or an EXPENSE account. Reports count a refund once in either representation. **Owner decision D5 = A (A34): the businesses use a contra-revenue INCOME account named *Etsy Refunds*.**
 - Legacy accounts are `UNCLASSIFIED`. Assign roles deliberately before standard postings; nothing is guessed or backfilled. A legacy account may receive its first role without changing its type or currency.
 - **A used classified role cannot change.**
 
@@ -162,7 +162,7 @@ Amounts are the source event's actual amount. A side may be split among accounts
 | Source / event | Amount; currency | Debit | Credit |
 | --- | --- | --- | --- |
 | order / INITIAL | `net_payable_amount`; order currency | ETSY_RECEIVABLE | REVENUE |
-| supplier_purchase / INITIAL | `total_amount`; purchase currency | SUPPLIER_COST | Asset or liability (payment/payable) |
+| supplier_purchase / INITIAL | `total_amount`; purchase currency | SUPPLIER_COST | Asset or liability (payment/payable). The application credits **Supplier Payable** (A25) |
 | supplier_refund / INITIAL | `refund_amount`; purchase/refund currency | Asset receiving the refund | SUPPLIER_COST (reduces cost) |
 | expense / INITIAL | `amount`; expense currency | DIRECT_EXPENSE or SHARED_EXPENSE per `expense_type` | Asset or liability (payment/payable) |
 | refund / INITIAL | `refund_amount`; refund/order currency | REFUND (contra-revenue or expense) | Asset or liability (refunded/owed) |
@@ -282,7 +282,55 @@ Deferred, per-tenant checks:
   - `23505` → 409; `23503`, `23514` and `P0001` → 422; anything else → 500. All carry generic messages.
   - drizzle-orm 0.45's `DrizzleQueryError` embeds the **SQL and its parameters** in `message`, so error messages are never returned or logged. Only the error name and SQLSTATE are logged.
 - **Static guards:** ESLint `@typescript-eslint/no-restricted-imports` allows the schema, `drizzle-orm`, `postgres` and value imports of the database client only in `src/db`, `src/server/{db,dal,auth}` and `src/server/container.ts`. `tests/app/unit/static-guards.test.ts` enforces the same rule plus the T16–T18 checks.
-- **Financial writes (future milestones):** each runs in one transaction with a deterministic event key (e.g. `order:<id>:INITIAL`) via `runInTransaction`, and is acknowledged only after COMMIT.
+- **Financial writes:** each runs in one transaction with a deterministic event key (e.g. `supplier_purchase:<id>:INITIAL`) via `runInTransaction`, and is acknowledged only after COMMIT.
+
+### 5.1 Orders and supplier purchases (Implemented 2026-11-26, Phase 2a)
+
+No schema change: migrations 0000–0009 and their hashes are untouched, and `drizzle-kit generate` reports no changes.
+
+| Path | Responsibility |
+| --- | --- |
+| `src/lib/money.ts` | Exact money: scale-4 `bigint` (the scale of NUMERIC(19,4)); inputs have at most 2 decimals; never rounds, never uses floating point. Limit 999,999,999,999.99 |
+| `src/lib/dates.ts` | Calendar date ⇄ instant in the business timezone (Intl only, DST-safe) |
+| `src/lib/validation.ts` | PII screening (email, phone), URL and identifier patterns, shared by forms and the server |
+| `src/server/dal/{suppliers,products,orders,order-items,supplier-purchases,supplier-purchase-items,journal,order-profit}.ts` | Tenant-scoped data access. Joins and row locks use `scope.executor` with `tenantEq()` on every table, only inside the DAL |
+| `src/server/{suppliers,products,orders,purchases}/service.ts` | Business rules, strict Zod input schemas, transactions and audit entries |
+| `src/server/orders/{status,profit}.ts` | The status transition table and the profit view |
+| `src/server/ledger/{accounts,posting}.ts` | Account resolution, the purchase posting and its reversal, deterministic event keys |
+| `src/server/api/*.ts`, `src/app/api/v1/**/route.ts` | Thin handlers and routes, wrapped by `tenantRoute` with validated route parameters |
+| `src/app/app/**`, `src/components/**` | Pages (list, detail, create) and accessible client forms that call the JSON API |
+
+**API (all `private, no-store`, tenant from the session only, same-origin required for writes):**
+
+| Method and path | Result |
+| --- | --- |
+| `GET`, `POST /api/v1/suppliers`; `GET`, `POST /api/v1/products` | List (`?limit=1..100&offset=`), create (201) |
+| `GET`, `POST /api/v1/orders` | List with profit per order; create with items (201); duplicate Etsy ID is 409 naming `etsyOrderId` |
+| `GET`, `PATCH /api/v1/orders/:orderId` | Detail (items, locked flags, purchases, profit, allowed next statuses); edit header and, while unlocked, items |
+| `POST /api/v1/orders/:orderId/status` | One approved transition (A26); a repeat is a no-op |
+| `GET`, `POST /api/v1/purchases`; `GET`, `PATCH /api/v1/purchases/:purchaseId` | List; create a DRAFT (posts nothing); detail (with `canConfirm` and `confirmBlockedReason`); edit a draft only. Create and edit reject a cancelled order's items: 422 `ORDER_CANCELLED` naming `lines.N.orderItemId` (A35) |
+| `POST …/confirm`, `…/cancel`, `…/reverse` | Confirm (A25), cancel a draft, reverse with a required reason |
+
+Errors are generic and name fields only. Unknown, malformed and other-tenant IDs all answer 404 `NOT_FOUND`; references to another tenant's product, supplier, order item or replaced purchase answer exactly like unknown ones (422).
+
+**Confirmation algorithm (one transaction, whole-transaction retry on `40001`/`40P01`, resolves after COMMIT):**
+1. Lock the purchase row `FOR UPDATE`. If it is already confirmed, return the existing posting (`alreadyConfirmed: true`) and write nothing.
+2. Require status DRAFT, a purchase date, the business currency, at least one line, line currencies equal to the purchase currency, stored total equal to the exact sum of the lines, and a total above zero. Then lock the distinct orders of the lines in ID order (`FOR UPDATE`) **before any write**, and refuse with 409 `ORDER_CANCELLED` if any of them is cancelled (A35).
+3. Resolve the single active `SUPPLIER_COST` account in the currency (none or several fails closed) and the Supplier Payable account.
+4. Set CONFIRMED with `confirmed_at`; insert a DRAFT journal entry (key `supplier_purchase:<id>:INITIAL`, dated at the purchase date) with the two lines; finalize it.
+5. Move each affected `NEW` order (already locked in step 2) to `SUPPLIER_ORDERED`, in ID order; write audit entries.
+6. At COMMIT the database re-validates balance, the posting rules and that the confirmation and its journal commit together. Any failure rolls everything back.
+
+**Reversal:** lock the purchase; require it to be confirmed; call `reverse_journal_entry` with the key `supplier_purchase:<id>:REVERSAL` (exact opposite lines; a retry returns the existing reversal); audit the reason. The original entry, the purchase row and its lines are never edited.
+
+**Profit query** (`dal/order-profit.ts`): one tenant-constrained aggregate. Confirmed cost counts lines of purchases with status CONFIRMED, PARTIALLY_REFUNDED or REFUNDED that have **no finalized reversal**; draft lines are summed separately and never counted. **Supplier refunds (Phase 2b) must subtract refund amounts here**: purchases in the refunded statuses are currently counted at full cost. **Revenue** is the recorded net payable, or **zero for a CANCELLED order** (`orders/profit.ts`; the response keeps `netPayable` as recorded and adds `revenue` and `revenueExcluded`). Confirmed costs of a cancelled order keep counting, so it shows a loss; nothing is reversed automatically (A35).
+
+**Known limits:**
+- Purchases are created for one order at a time in the UI (the API accepts lines on several orders); order editing and draft-purchase editing have an API but no form yet; an order item referenced by any purchase line, including a cancelled draft, stays locked.
+- "No new purchase on a cancelled order" and "no confirmation of a draft that covers one" are enforced by the **application** (A35), not by the database. A writer that bypasses the service (raw SQL) could still do it. Enforcing it in the database needs a trigger, which is a new migration and is not approved.
+- There is **no application-level rate limiting on `/api/v1/*`**: Better Auth rate-limits only its own endpoints (T19). Rely on host-level limits at deployment, which are unverified.
+- Creating a purchase checks its order items before inserting. If another request replaces those items in between, the foreign keys still prevent a dangling line and the loser receives a generic 422. There is no pre-check lock.
+- Double submission of "create purchase" creates two drafts (the UI disables the button while pending); there is no natural key unless a supplier reference is given.
 
 ## 6. Imports, exports and notifications (System Architecture v1.1 §9–10)
 
@@ -319,7 +367,7 @@ Deferred, per-tenant checks:
 **Onboarding (decision A22).** `POST /api/v1/onboarding` (`sessionRoute`) takes `{ "shopName": string }`: trimmed, 1–160 characters, strict schema. One transaction (`runInTransaction`) creates:
 1. `business_accounts`, via `INSERT … ON CONFLICT (owner_user_id) DO NOTHING`. A retry, a race or a second attempt returns the existing business unchanged (200, `created: false`). A new business returns 201. A concurrent request waits on the unique index and then sees the committed business. There is no tenant switching.
 2. `account_settings` with documented keys: **`payout_eligibility_delay_days` = 14** and **`payout_weekday` = `"MONDAY"`** (JSONB values; configurable per business, PRODUCT.md §5 rule 15).
-3. The starter chart of `financial_accounts`, with explicit roles. `TRANSFER_CLEARING` exists in USD (the Payoneer withdrawal principal) and PKR, `BANK` is PKR, and `ETSY_RECEIVABLE`, `ETSY_PAYOUT_CLEARING`, `PAYONEER`, `SUPPLIER_COST`, `DIRECT_EXPENSE`, `SHARED_EXPENSE` and `REVENUE` use the business base currency (USD by default). **No `REFUND` account until PRODUCT.md D5 is decided**, and no undocumented PKR expense accounts.
+3. The starter chart of `financial_accounts`, with explicit roles. `TRANSFER_CLEARING` exists in USD (the Payoneer withdrawal principal) and PKR, `BANK` is PKR, and `ETSY_RECEIVABLE`, `ETSY_PAYOUT_CLEARING`, `PAYONEER`, `SUPPLIER_COST`, `DIRECT_EXPENSE`, `SHARED_EXPENSE` and `REVENUE` use the business base currency (USD by default). **No `REFUND` account yet.** D5 is decided (contra-revenue INCOME *Etsy Refunds*, A34) but the account arrives with the customer-refund slice (Phase 2b). There are no undocumented PKR expense accounts.
 4. `audit_logs` entries (`CREATE`, actor = owner, `before_data` null) for the business, both settings and every account. The existing `audit_logs_owner_tenant_fk` makes the database reject any other actor.
 
 Onboarding posts no journal entries. Any failure rolls the whole transaction back.
@@ -332,7 +380,8 @@ Onboarding posts no journal entries. Any failure rolls the whole transaction bac
 - Static guards:
   - Only the DAL, auth, db and container modules import the database.
   - Every route handler uses `sessionRoute`/`tenantRoute` or is annotated `// public:`; every page calls a page guard or is annotated `// public:`.
-  - The T16 meta-test lists all 34 tenant tables. The 3 exposed tables (`account_settings`, `financial_accounts`, `audit_logs`) must have a DAL module and cross-tenant tests, and the other 31 must be imported by no application code.
+  - The T16 meta-test lists all 34 tenant tables. The **11 exposed tables** must have a DAL module and cross-tenant tests, and the other **23** must be imported by no application code. Exposed: `account_settings`, `financial_accounts`, `audit_logs` (M2) and `suppliers`, `products`, `orders`, `order_items`, `supplier_purchases`, `supplier_purchase_items`, `journal_entries`, `journal_lines` (Phase 2a; cross-tenant tests in `phase2-isolation`).
+  - `scope.executor` may be used only inside `src/server/dal/`, and every DAL file that uses it must constrain tables to the session tenant (A33).
 
 **Sessions (owner-confirmed 2026-11-25)**
 - Database sessions: `expiresIn` 7 days, `updateAge` 1 day. **The cookie cache is disabled**, so sign-out and revocation take effect on the next request.
@@ -355,7 +404,7 @@ Onboarding posts no journal entries. Any failure rolls the whole transaction bac
 
 **Defense in depth (later; separate approval and forward migration).** A least-privilege runtime role, then optional RLS with **transaction-local** `set_config('app.account_id', …, true)`. The transaction-local form is required under Hyperdrive.
 
-**Security tests (status 2026-11-25; all against the disposable PostgreSQL 18.6 database)**
+**Security tests (status 2026-11-26; all against the disposable PostgreSQL 18.6 database).** T1–T5 and T7 also run for every Phase 2a endpoint and table in `db/phase2-isolation`: reads, writes and state changes across tenants answer like a missing record and change nothing; references to another tenant's records are rejected like unknown IDs; forged tenant fields are refused on every write endpoint; unauthenticated (401), not-onboarded (409) and foreign-origin (403) requests are checked on all 16 routes.
 
 | # | Case | Status | Where (`tests/app/`) |
 | --- | --- | --- | --- |
@@ -366,7 +415,7 @@ Onboarding posts no journal entries. Any failure rolls the whole transaction bac
 | T5 | Forged tenant IDs in body, query, headers and cookies | Pass | `db/tenant-isolation`, `unit/onboarding-rules` |
 | T6 | Second business / tenant switching | Pass | `db/onboarding` |
 | T7 | Unauthenticated routes and pages | Pass | `db/api-routes`, `unit/page-guards` |
-| T8 | Invalid or tampered sessions | Pass | `db/auth-flows`, `db/api-routes` |
+| T8 | Invalid or tampered sessions (signature altered at five positions, truncated, extended, empty; token without signature) | Pass | `db/auth-flows`, `db/api-routes` |
 | T9 | Expired session | Pass | `db/auth-flows`, `db/api-routes` |
 | T10 | Logout replay | Pass | `db/auth-flows`, `db/api-routes` |
 | T11 | Reset revokes sessions | **Deferred**: reset is out of scope until PRODUCT.md D2. The option is configured and asserted in `unit/auth-config` | — |
@@ -447,7 +496,7 @@ Onboarding posts no journal entries. Any failure rolls the whole transaction bac
 | A9 | 2026-11-24 | Shipment creation-date floor; adjustments rejected against reversed originals; complete notes audit | Implemented (0007) |
 | A10 | 2026-11-24 | Tenant-row serialization for aggregate checks; services retry `40001`/`40P01` | Implemented / service requirement |
 | A11 | 2026-11-24 | Reconciliation capacity applies only to DEPOSIT transactions (defect fix) | Implemented (0008) |
-| A12 | 2026-11-24 | **Migrations 0000–0008 frozen**: forward-only, SHA-256 manifest, never `drizzle-kit push` | Accepted |
+| A12 | 2026-11-24 | **Migrations 0000–0008 frozen**: forward-only, SHA-256 manifest, never `drizzle-kit push` | Accepted; extended to 0000–0009 by A24 |
 | A13 | 2026-11-24 | `drizzle.config.ts` loads environment via `@next/env` (Next.js precedence, `.env.local`); generation works offline without a URL | Implemented |
 | A14 | 2026-11-24 | Database tests run only against a disposable, loopback-only Docker database through `scripts/local-db.cjs`; never `DATABASE_URL`, Neon or production | Implemented |
 | P1 | 2026-11-24 | Better Auth 1.7.x + drizzle-orm 0.45.4 + drizzle-kit 0.31.11 (§8) | Superseded by A21 |
@@ -463,6 +512,17 @@ Onboarding posts no journal entries. Any failure rolls the whole transaction bac
 | A22 | 2026-11-25 | Separate idempotent onboarding transaction: settings `payout_eligibility_delay_days`/`payout_weekday`; explicit-role starter chart without REFUND (D5) and without undocumented PKR expense accounts; audit entries using the existing `audit_logs` schema | Accepted (owner); implemented |
 | A23 | 2026-11-25 | Hyperdrive and Neon checks deferred to the deployment milestone. Only the disposable local database is used; Hyperdrive and Neon behavior is **unverified** | Accepted (owner) |
 | A24 | 2026-11-25 | **Migration 0009 frozen.** Its SQL and snapshot SHA-256 values are in `tests/baseline-migrations.json` (20 entries, 0000–0009). It is never edited, reordered or regenerated; later changes are forward-only from 0010 | Accepted (owner) |
+| A25 | 2026-11-26 | **Supplier Payable.** Confirming a purchase debits `SUPPLIER_COST` and credits a USD (base currency) LIABILITY account named *Supplier Payable* with the existing `UNCLASSIFIED` role. No new role exists, so the account is found by exact name, type and currency; accounts are never renamed or retyped by the application. It is part of the starter chart, and a business onboarded earlier gets it created, once and audited, inside its first confirmation. **PAYONEER is not credited**, so a later Payoneer import cannot double-count the payment. Phase 3 settlement (proposed, to confirm as D7): record the payment with explicit posting legs (`payoneer_transaction` OTHER/ADJUSTMENT or a manual adjustment), debit Supplier Payable and credit the paying asset; declared legs place no account-type restriction, so the existing rules allow it, and `SUPPLIER_COST` is never posted again | Accepted (owner); implemented |
+| A26 | 2026-11-26 | Order status changes: NEW → SUPPLIER_ORDERED → SHIPPED → IN_TRANSIT → DELIVERED, one step at a time; CANCELLED from any status before DELIVERED; DELIVERED requires a delivery date not before the order date; a repeated request is a no-op; DELIVERED and CANCELLED are terminal for status (cancelled orders cannot be edited). Confirming a purchase moves NEW to SUPPLIER_ORDERED. Payout and refund statuses cannot be set | Accepted (owner); implemented |
+| A27 | 2026-11-26 | Orders are not posted to the ledger in Phase 2a (decision D8). Profit is computed from order and purchase records | Accepted (owner); implemented |
+| A28 | 2026-11-26 | Corrections: reversal with a required, PII-screened reason through `reverse_journal_entry`; derived REVERSED state; replacement purchases note `Replaces purchase <id>.`, must use a blank or new reference, and supplier-reference uniqueness is not relaxed | Accepted (owner); implemented |
+| A29 | 2026-11-26 | Calendar dates are stored as the instant of local midnight in `business_accounts.timezone` and displayed by converting back, so the date never shifts. Intl only, no dependency. If local midnight does not exist (DST gap) the first valid instant of the date is used. A purchase's journal `transaction_date` equals its purchase date | Accepted (owner); implemented |
+| A30 | 2026-11-26 | Money (PRODUCT D3 open): scale-4 `bigint` helpers, at most 2 input decimals, line total = quantity × unit cost exactly (guaranteed by construction in the service, not by a database constraint), uneven totals split into lines, shipping, tax and discounts allocated by the user, a purchase needs a total above zero to confirm, amounts at most 999,999,999,999.99. Amounts travel as strings, never JSON numbers | Accepted (owner); implemented |
+| A31 | 2026-11-26 | PII screening of free text (email and phone patterns), URL validation, strict schemas, and generic errors that name fields only. Limitations: postal addresses and names are not detectable; long digit runs in notes can be flagged by mistake, so reference numbers belong in their own fields | Accepted (owner); implemented |
+| A32 | 2026-11-26 | Phase 2a scope: no order item price; business currency only (no FX); minimal product catalog (name, SKU, optional default supplier, informational default cost) with snapshots on items; marketplace validated in the application (EBAY, AMAZON, ALIEXPRESS, CUSTOM; no CHECK); no hard deletes; items lock once a purchase line references them; purchase quantity may exceed ordered quantity with a warning; no migration 0010 | Accepted (owner); implemented |
+| A33 | 2026-11-26 | Data-layer rule: joins, ordering, locks and aggregates use `scope.executor` and constrain **every** table with `tenantEq()` or the session tenant, only inside `src/server/dal/**`. Static guards enforce both; mutation testing confirmed the isolation tests fail when the predicate is removed | Implemented |
+| A34 | 2026-11-26 | **D5 = A: refunds are contra-revenue.** The `REFUND` account is an INCOME account named *Etsy Refunds* in the business base currency. The starter-chart addition (new businesses) and its **lazy creation inside the transaction of an existing business's first refund** (find by role, else create and audit) arrive with the customer-refund slice (Phase 2b). Nothing changes now and no migration is needed, because an INCOME account with role `REFUND` is already valid (§4.2). A used ledger account's type cannot change, so this is final once the first refund posts | Decided; implemented with Phase 2b |
+| A35 | 2026-11-26 | **D9: cancelled orders.** A cancelled order counts **zero** Etsy revenue; confirmed, unreversed supplier costs keep counting and nothing is reversed automatically. New purchases (and edits that add a cancelled order's items) are rejected with 422 `ORDER_CANCELLED`; a draft that already covers a cancelled order cannot be confirmed (409); re-confirming an already confirmed purchase stays a 200 no-op. The rule lives in the service, so every caller is covered, and is **application-level** (the database has no such constraint; see Known limits). **Lock-order rule: purchase row → order rows (`ORDER BY id FOR UPDATE`, DAL `lockOrdersForUpdate`) → first write** (the first write takes the tenant lock through the posting triggers). An order is never locked after a write: the first version took order locks after the first write and deadlocked against a concurrent cancellation (1 in 60 rounds measured), which a deterministic lock test now guards | Implemented |
 
 ## 10. Open conflicts and decisions (do not resolve without the owner)
 

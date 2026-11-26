@@ -6,7 +6,15 @@ import {
   PG_RAISE_EXCEPTION,
   PG_UNIQUE_VIOLATION,
 } from '@/server/db/errors';
+import { DomainError, type DomainErrorKind } from '@/server/domain/errors';
 import { jsonResponse } from './responses';
+
+const DOMAIN_STATUS: Record<DomainErrorKind, number> = {
+  not_found: 404,
+  conflict: 409,
+  invalid_state: 409,
+  unprocessable: 422,
+};
 
 /** An error whose status, code and message are safe to return to clients. */
 export class HttpError extends Error {
@@ -43,6 +51,9 @@ export const validationError = (fields: readonly string[]) => new HttpError(400,
 export function errorToResponse(error: unknown): Response {
   if (error instanceof HttpError) {
     return jsonResponse({ error: { code: error.code, message: error.publicMessage, ...(error.fields ? { fields: error.fields } : {}) } }, error.status);
+  }
+  if (error instanceof DomainError) {
+    return jsonResponse({ error: { code: error.code, message: error.message, ...(error.fields ? { fields: error.fields } : {}) } }, DOMAIN_STATUS[error.kind]);
   }
   const code = getPostgresErrorCode(error);
   if (code === PG_UNIQUE_VIOLATION) {

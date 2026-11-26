@@ -86,7 +86,7 @@ describe.skipIf(!hasTestDatabase)('business onboarding', () => {
       expect(rows.map((row) => `${row.accountRole}:${row.accountType}:${row.currency}`).sort()).toEqual([
         'BANK:ASSET:PKR', 'DIRECT_EXPENSE:EXPENSE:USD', 'ETSY_PAYOUT_CLEARING:ASSET:USD', 'ETSY_RECEIVABLE:ASSET:USD',
         'PAYONEER:ASSET:USD', 'REVENUE:INCOME:USD', 'SHARED_EXPENSE:EXPENSE:USD', 'SUPPLIER_COST:EXPENSE:USD',
-        'TRANSFER_CLEARING:ASSET:PKR', 'TRANSFER_CLEARING:ASSET:USD',
+        'TRANSFER_CLEARING:ASSET:PKR', 'TRANSFER_CLEARING:ASSET:USD', 'UNCLASSIFIED:LIABILITY:USD',
       ]);
       expect(rows.every((row) => row.isActive)).toBe(true);
       expect(rows.some((row) => row.accountRole === 'REFUND')).toBe(false);

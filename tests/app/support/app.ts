@@ -7,6 +7,13 @@ import { onboardBusiness } from '@/server/onboarding/service';
 import { sessionRoute, tenantRoute } from '@/server/http/routes';
 import { postOnboarding } from '@/server/api/onboarding';
 import { getBusiness } from '@/server/api/business';
+import { getOrder, getOrders, patchOrder, postOrder, postOrderStatus } from '@/server/api/orders';
+import { orderParamsSchema, purchaseParamsSchema } from '@/server/api/params';
+import { getProducts, postProduct } from '@/server/api/products';
+import {
+  getPurchase, getPurchases, patchPurchase, postCancelPurchase, postConfirmPurchase, postPurchase, postReversePurchase,
+} from '@/server/api/purchases';
+import { getSuppliers, postSupplier } from '@/server/api/suppliers';
 import { testDatabaseUrl } from './database';
 
 export const TEST_ORIGIN = 'http://localhost:3000';
@@ -130,14 +137,40 @@ export async function registerAndOnboard(app: AppContainer, shopName: string, la
 
 /** The app's API routes wired to a test container instead of the process one. */
 export function apiRoutes(app: AppContainer) {
+  const getDeps = () => app;
+  const order = { getDeps, params: orderParamsSchema };
+  const purchase = { getDeps, params: purchaseParamsSchema };
   return {
-    onboarding: sessionRoute(postOnboarding, () => app),
-    business: tenantRoute(getBusiness, () => app),
+    onboarding: sessionRoute(postOnboarding, { getDeps }),
+    business: tenantRoute(getBusiness, { getDeps }),
+    suppliers: { list: tenantRoute(getSuppliers, { getDeps }), create: tenantRoute(postSupplier, { getDeps }) },
+    products: { list: tenantRoute(getProducts, { getDeps }), create: tenantRoute(postProduct, { getDeps }) },
+    orders: {
+      list: tenantRoute(getOrders, { getDeps }),
+      create: tenantRoute(postOrder, { getDeps }),
+      get: tenantRoute(getOrder, order),
+      patch: tenantRoute(patchOrder, order),
+      status: tenantRoute(postOrderStatus, order),
+    },
+    purchases: {
+      list: tenantRoute(getPurchases, { getDeps }),
+      create: tenantRoute(postPurchase, { getDeps }),
+      get: tenantRoute(getPurchase, purchase),
+      patch: tenantRoute(patchPurchase, purchase),
+      confirm: tenantRoute(postConfirmPurchase, purchase),
+      cancel: tenantRoute(postCancelPurchase, purchase),
+      reverse: tenantRoute(postReversePurchase, purchase),
+    },
   };
 }
 
+/** Calls a route handler the way Next.js does, including dynamic segments. */
+export function callRoute(handler: (request: Request, context?: { params: Promise<Record<string, string>> }) => Promise<Response>, request: Request, params: Record<string, string> = {}): Promise<Response> {
+  return handler(request, { params: Promise.resolve(params) });
+}
+
 export interface ApiCallOptions {
-  readonly method?: 'GET' | 'POST';
+  readonly method?: 'GET' | 'POST' | 'PATCH';
   readonly body?: unknown;
   readonly rawBody?: string;
   readonly cookie?: string;

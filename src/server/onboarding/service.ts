@@ -11,6 +11,7 @@ import { insertAuditLogs, type AuditEntry } from '@/server/dal/audit-logs';
 import { tenantScope } from '@/server/dal/tenant-scope';
 import { toBusinessSummary, type BusinessSummary } from '@/server/business/summary';
 import { SHOP_NAME_MAX_LENGTH } from '@/lib/policy';
+import { SUPPLIER_PAYABLE_ACCOUNT_NAME } from '@/server/ledger/accounts';
 
 // Onboarding (ARCHITECTURE.md §7.2): one idempotent transaction creates the
 // business, its payout settings and the explicit-role starter chart.
@@ -40,7 +41,9 @@ export interface StarterAccountSpec {
  * ARCHITECTURE.md §7.2 starter chart. TRANSFER_CLEARING exists in USD (the
  * Payoneer withdrawal principal is USD) and PKR (bank receipts), BANK is PKR,
  * everything else uses the base currency. No REFUND account until PRODUCT.md
- * D5 is decided; no undocumented PKR expense accounts.
+ * D5 is decided; no undocumented PKR expense accounts. Supplier Payable is a
+ * LIABILITY with the existing UNCLASSIFIED role (A25): confirmed supplier
+ * purchases credit it, and Phase 3 settles it from the paying asset.
  */
 export const STARTER_CHART: readonly StarterAccountSpec[] = [
   { name: 'Etsy Receivable', accountType: 'ASSET', accountRole: 'ETSY_RECEIVABLE', currency: 'BASE' },
@@ -53,6 +56,7 @@ export const STARTER_CHART: readonly StarterAccountSpec[] = [
   { name: 'Direct Expenses', accountType: 'EXPENSE', accountRole: 'DIRECT_EXPENSE', currency: 'BASE' },
   { name: 'Shared Expenses', accountType: 'EXPENSE', accountRole: 'SHARED_EXPENSE', currency: 'BASE' },
   { name: 'Etsy Revenue', accountType: 'INCOME', accountRole: 'REVENUE', currency: 'BASE' },
+  { name: SUPPLIER_PAYABLE_ACCOUNT_NAME, accountType: 'LIABILITY', accountRole: 'UNCLASSIFIED', currency: 'BASE' },
 ];
 
 export const AUDIT_ACTION_CREATE = 'CREATE';

@@ -149,13 +149,33 @@ describe.skipIf(!hasTestDatabase)('authentication flows', () => {
       expect(await resolveSession(app, new Headers(cookie ? { cookie } : {}))).toBeNull();
     });
 
-    it('rejects a valid token with a tampered signature', async () => {
+    // The cookie is `<token>.<signature>`; the signature is a base64 HMAC of 32 bytes (44 characters).
+    // Flipping the TOP bit of a base64 digit always changes the decoded bytes. Do not flip a low bit of
+    // the final data character instead: it carries 2 unused padding bits, so e.g. A -> B decodes to the
+    // identical signature and is (correctly, harmlessly) accepted. An earlier version of this test did
+    // that and failed in about 1 run in 16 (measured: 8 of 120 sessions).
+    const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const flipTopBit = (char: string) => BASE64[BASE64.indexOf(char) ^ 32] ?? char;
+
+    it('rejects a valid token with any tampered signature', async () => {
       const { cookie } = await registerAndSignIn(app, 'tamper');
-      const [name, value] = [cookie.slice(0, cookie.indexOf('=')), decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1))];
-      const flipped = value.slice(0, -2) + (value.slice(-2, -1) === 'A' ? 'B' : 'A') + value.slice(-1);
-      expect(await resolveSession(app, cookieHeaders(`${name}=${encodeURIComponent(flipped)}`))).toBeNull();
+      const name = cookie.slice(0, cookie.indexOf('='));
+      const value = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
+      const dot = value.lastIndexOf('.');
+      const signature = value.slice(dot + 1);
+      expect(signature).toHaveLength(44);
+      const resolveWith = (candidate: string) => resolveSession(app, cookieHeaders(`${name}=${encodeURIComponent(value.slice(0, dot + 1) + candidate)}`));
+
+      expect(await resolveWith(signature)).not.toBeNull();
+      for (const index of [0, 1, 20, signature.length - 3, signature.length - 2]) {
+        const tampered = signature.slice(0, index) + flipTopBit(signature[index] ?? '') + signature.slice(index + 1);
+        expect(await resolveWith(tampered), `signature position ${index}`).toBeNull();
+      }
+      expect(await resolveWith(signature.slice(0, -1)), 'truncated signature').toBeNull();
+      expect(await resolveWith(`${signature}A`), 'extended signature').toBeNull();
+      expect(await resolveWith(''), 'empty signature').toBeNull();
       const tokenOnly = value.split('.')[0];
-      expect(await resolveSession(app, cookieHeaders(`${name}=${tokenOnly}`))).toBeNull();
+      expect(await resolveSession(app, cookieHeaders(`${name}=${tokenOnly}`)), 'token without signature').toBeNull();
       expect(await resolveSession(app, cookieHeaders(cookie))).not.toBeNull();
     });
   });

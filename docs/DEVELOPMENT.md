@@ -52,8 +52,8 @@ To run the app locally (`npm run dev`), `DATABASE_URL` must point at a local Pos
 | `npm run test:db:offline` | 8 offline checks (§5.1). |
 | `npm run test:db:integration` | 71 PostgreSQL cases (§5.2). Every case is skipped without a test database. |
 | `npm run test:db:concurrency` | 12 two-session concurrency cases (§5.3). |
-| `npm run test:app` | All 156 Vitest application cases (§5.6). Without a test database the 73 database-backed cases are **skipped** and the 83 unit cases run. |
-| `npm run test:app:unit` / `npm run test:app:db` | Only `tests/app/unit` (83) or only `tests/app/db` (73; run through the local runner). |
+| `npm run test:app` | All 512 Vitest application cases (§5.6). Without a test database the 230 database-backed cases are **skipped** and the 282 unit cases run. |
+| `npm run test:app:unit` / `npm run test:app:db` | Only `tests/app/unit` (282) or only `tests/app/db` (230; run through the local runner). |
 | `node scripts/audit-schema.cjs` | Offline audit: FK targets and ordering, tenant roots, identifier lengths, maintained-SQL parity, frozen hashes. |
 | `node scripts/audit-env.cjs` | Offline check of the `drizzle.config.ts` environment precedence (synthetic values only). |
 | `node scripts/verify-local-db.cjs` | Runtime catalog and migration-ledger verification (run through the local runner). |
@@ -131,12 +131,19 @@ Report actual results. If a check cannot run, say why and mark the task partiall
   - `@/` resolves to `src/`, and `server-only` is aliased to a no-op stub.
   - Files run sequentially, because the database files share one disposable database and observe real lock waits.
   - `NODE_ENV=test`; the auth configuration explicitly keeps Better Auth's origin and CSRF checks and rate limiting on (ARCHITECTURE.md §8).
-- **Unit (83, no database):** config validation, HTTP layer (origin, errors, bodies, no-store), transaction retry, the auth policy as effective at runtime, the auth log sink, page-guard decisions, onboarding rules and the starter chart, and the static guards (T16–T18).
-- **Database-backed (73):** `describe.skipIf` without `LOCAL_TEST_DATABASE_URL`, so they run only through `scripts/local-db.cjs run`.
-  - Files: `auth-flows`, `tenant-isolation`, `onboarding`, `origin-csrf`, `rate-limit` and `api-routes` (including the real `src/app/api/**/route.ts` files through the composition root).
+- **Unit (282, no database):**
+  - Config validation, HTTP layer (origin, errors, bodies, no-store), transaction retry, the auth policy as effective at runtime, the auth log sink, page-guard decisions, onboarding rules and the starter chart (`auth-config`, `config`, `http`, `transaction`, `page-guards`, `onboarding-rules`).
+  - Phase 2a: `money` (49), `dates` (39, including daily round trips across 15 timezones and DST), `validation` (66, PII and URL screening), `order-status` (14, every status pair, profit, and zero revenue for cancelled orders), `page-helpers` (15), `api-client` (8), `views` (5, dates shown in the business timezone).
+  - `static-guards` (13): T16–T18 plus the data-layer rules (A33).
+- **Database-backed (230):** `describe.skipIf` without `LOCAL_TEST_DATABASE_URL`, so they run only through `scripts/local-db.cjs run`.
+  - M2 files: `auth-flows`, `tenant-isolation`, `onboarding`, `origin-csrf`, `rate-limit` and `api-routes` (including the real `src/app/api/**/route.ts` files through the composition root).
+  - Phase 2a files: `orders` (46), `purchases` (44: draft rules, exact money, confirmation exactly once, parallel and overlapping confirmations with observed lock waits, atomic rollback, immutability, reversal, profit), `catalog` (26, suppliers and products) and `phase2-isolation` (16: every new endpoint and table across tenants) and `profit-ledger-model` (7: random create, confirm, cancel, order-cancel and reverse sequences over six seeds, replayed against an independent `bigint` model after every step, then the ledger balances compared with the same model; mutation-checked) and `cancelled-orders` (18: D9 before and after confirmation, API and service rejection, a draft that cannot be confirmed, tenant isolation of the new data-layer functions, a deterministic lock-order test and a 40-round confirm-versus-cancel race with the deadlock counter checked).
+  - Isolation tests were mutation-checked: removing the tenant predicate from the shared scope fails 7 tests, and removing it from one lookup fails 1.
   - Better Auth is driven through its HTTP handler (`tests/app/support/app.ts`), so origin checks and rate limits behave as in production. Each call uses a fresh documentation-range client IP, so only the rate-limit tests share a bucket.
   - Data stays in the disposable database, which is destroyed by `stop`.
 - The T1–T19 matrix and the file that covers each case are in ARCHITECTURE.md §7.2.
+- **When a test fails, diagnose before blaming the host.** Run `npx vitest run --reporter=json --outputFile=<file>` (through the runner for database tests) and compare the failing test, its duration and the whole run's duration and import time. A failure at normal speed is a real defect in the code or the test; only a run that is many times slower than the usual ~20 s points at the machine. Repeat the suite several times before calling anything fixed.
+- **Tamper tests on signed values:** change a digit that carries real bits (for example flip the top bit of a base64 digit). The final character of a base64 signature can contain unused padding bits, and changing only those decodes to the same bytes.
 
 ## 6. Migration workflow
 
@@ -186,9 +193,9 @@ Upgrade only with owner approval. Before installing, recheck the target versions
 
 | Path | Contents |
 | --- | --- |
-| `src/app/` | App Router: `/sign-up`, `/sign-in`, `/onboarding`, `/app` (placeholder home); `api/auth/[...all]` (Better Auth), `api/v1/onboarding`, `api/v1/business` |
-| `src/server/` | Server-only code: `config/`, `db/`, `dal/`, `auth/`, `http/`, `onboarding/`, `business/`, `api/`, `container.ts` (ARCHITECTURE.md §5) |
-| `src/components/`, `src/lib/` | Minimal accessible Tailwind forms; the Better Auth browser client, shared paths and the policy limits used by both forms and server validation |
+| `src/app/` | App Router: `/sign-up`, `/sign-in`, `/onboarding`; `/app` with `orders`, `orders/new`, `orders/[orderId]`, `purchases`, `purchases/new`, `purchases/[purchaseId]`, `suppliers` and `products` (a static navigation layout); `api/auth/[...all]` (Better Auth) and `api/v1/{onboarding,business,suppliers,products,orders,purchases}` |
+| `src/server/` | Server-only code: `config/`, `db/`, `dal/`, `auth/`, `http/`, `domain/`, `validation/`, `ledger/`, `onboarding/`, `business/`, `suppliers/`, `products/`, `orders/`, `purchases/`, `api/`, `container.ts` (ARCHITECTURE.md §5, §5.1) |
+| `src/components/`, `src/lib/` | Minimal accessible Tailwind forms and tables; the Better Auth browser client and JSON API client; pure helpers shared by forms and the server (`money`, `dates`, `validation`, `policy`, `paths`) |
 | `src/instrumentation.ts` | Startup configuration validation |
 | `src/db/schema.ts`, `src/db/auth-schema.ts` | Drizzle schema; Better Auth model mapping |
 | `src/db/sql/` | Maintained custom SQL sources (§6.1) |
@@ -203,6 +210,15 @@ Upgrade only with owner approval. Before installing, recheck the target versions
 - Only `src/db`, `src/server/{db,dal,auth}` and `src/server/container.ts` may import the database. ESLint and the static guards enforce this.
 - API routes use `sessionRoute`/`tenantRoute`; public routes and pages carry a `// public: <reason>` comment.
 - No cache directives on session or tenant paths.
+- Money is `bigint` at scale 4 (`src/lib/money.ts`), travels as strings, and is never a JavaScript number. Inputs have at most 2 decimals. Never round (PRODUCT.md D3 is open).
+- Calendar dates go through `src/lib/dates.ts` and the business timezone, never `new Date('YYYY-MM-DD')` (that is UTC midnight and shifts the displayed day).
+- Raw `execute()` results skip Drizzle's column mapping: timestamps arrive as text and must be converted by hand (see `listPurchasesForOrder`). Prefer the query builder.
+- Services never import `drizzle-orm`; joins and locks live in the DAL and use `scope.executor` with `tenantEq()` on every table.
+- **Lock order (ARCHITECTURE.md A35):** purchase row, then order rows in ID order (`lockOrdersForUpdate`), then the first write. Never lock an order after a write, because the first write takes the tenant lock and a concurrent order change would deadlock against it.
+- **Auditing a test database:** order two transactions by their **commit** time, not by `created_at`, `updated_at` or `now()` (those are transaction-start or application clocks and misorder races). `track_commit_timestamp` cannot be switched on in the runner's container (restarting the container destroys its tmpfs data); use a throwaway deferred trigger that records `clock_timestamp()`, which fires while the transaction still holds its locks. Never restart the disposable container: stop it and start a new one.
+- Dynamic route handlers use `tenantRoute(handler, { params: schema })`; a malformed ID is answered 404 like a missing one.
+- Pages read the session and request data inside `<Suspense>` and call their guard first; the current date is read after that.
+- Next.js allows **one `next dev` per project directory**. A second one exits and names the running one; do not kill someone else's server. To exercise the app against a disposable database use `next start` on another port, with `BETTER_AUTH_URL` set to an `https://` origin (production requires https) and the same value sent as `Origin`.
 
 ## 9. Conventions and Git
 
