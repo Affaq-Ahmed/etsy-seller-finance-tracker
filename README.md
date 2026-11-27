@@ -2,7 +2,7 @@
 
 A multi-tenant financial SaaS for Etsy sellers. It tracks orders, supplier purchases, Etsy payouts, Payoneer transactions, USD→PKR bank withdrawals, expenses, refunds and profitability. The stack is Next.js 16, TypeScript, PostgreSQL, Drizzle ORM and Better Auth, and it targets zero-cost infrastructure.
 
-**Status:** the V1 database foundation, authentication with tenant isolation, and orders with supplier purchases (confirmation, reversal, profit before expenses and refunds) are implemented and verified locally; payouts, expenses, refunds and reports have not started and nothing is deployed. See [STATUS.md](docs/STATUS.md).
+**Status:** the V1 database foundation, authentication with tenant isolation, orders with supplier purchases (confirmation, reversal) and expenses (draft, confirm, void, reverse; profit before refunds) are implemented and verified locally; payouts, refunds and reports have not started and nothing is deployed. See [STATUS.md](docs/STATUS.md).
 
 ## Documentation
 
