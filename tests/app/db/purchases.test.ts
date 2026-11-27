@@ -73,7 +73,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       const order = await makeOrder(app, user, { netPayableAmount: '100.00' });
       await makeDraftPurchase(app, user, supplierId, order);
       const { profit } = await orderDetail(order);
-      expect(profit).toMatchObject({ confirmedSupplierCosts: '0.00', draftSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeExpensesAndRefunds: '100.00' });
+      expect(profit).toMatchObject({ confirmedSupplierCosts: '0.00', draftSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeRefunds: '100.00' });
     });
 
     it('editing and cancelling a draft post nothing and change no profit', async () => {
@@ -277,7 +277,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       await confirmViaApi(draft.purchase.id);
       const detail = await orderDetail(order);
       expect(detail.order.status).toBe('SUPPLIER_ORDERED');
-      expect(detail.profit).toMatchObject({ confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeExpensesAndRefunds: '74.75', draftSupplierCosts: '0.00' });
+      expect(detail.profit).toMatchObject({ confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeRefunds: '74.75', draftSupplierCosts: '0.00' });
       expect(await auditCount(raw, tenantId(), 'order', 'STATUS_CHANGE', order.order.id)).toBe(1);
       expect(await auditCount(raw, tenantId(), 'supplier_purchase', 'CONFIRM', draft.purchase.id)).toBe(1);
     });
@@ -513,7 +513,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       expect(after).toMatchObject({ id: original?.id, status: 'FINALIZED' });
       expect(await linesOf(original?.id as string)).toEqual(originalLines);
 
-      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeExpensesAndRefunds: '100.00' });
+      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeRefunds: '100.00' });
       const [audit] = await raw`SELECT after_data FROM audit_logs WHERE entity_id = ${draft.purchase.id} AND action = 'REVERSE'`;
       expect(audit?.after_data).toMatchObject({ reason: 'Entered the wrong total' });
     });
@@ -571,7 +571,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       });
       expect(corrected.purchase.notes).toBe(`Replaces purchase ${wrong.purchase.id}.\nCorrected price`);
       await confirmViaApi(corrected.purchase.id);
-      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '23.00', directProfitBeforeExpensesAndRefunds: '77.00' });
+      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '23.00', directProfitBeforeRefunds: '77.00' });
       const purchases = (await orderDetail(order)).purchases.map((purchase) => purchase.effectiveStatus).sort();
       expect(purchases).toEqual(['CONFIRMED', 'REVERSED']);
     });
@@ -590,8 +590,8 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       });
       await confirmViaApi(spanning.purchase.id);
       await confirmViaApi(extra.purchase.id);
-      expect((await orderDetail(orderA)).profit).toMatchObject({ confirmedSupplierCosts: '12.34', directProfitBeforeExpensesAndRefunds: '37.66' });
-      expect((await orderDetail(orderB)).profit).toMatchObject({ confirmedSupplierCosts: '0.20', directProfitBeforeExpensesAndRefunds: '0.10' });
+      expect((await orderDetail(orderA)).profit).toMatchObject({ confirmedSupplierCosts: '12.34', directProfitBeforeRefunds: '37.66' });
+      expect((await orderDetail(orderB)).profit).toMatchObject({ confirmedSupplierCosts: '0.20', directProfitBeforeRefunds: '0.10' });
     });
 
     it('shows a loss as a negative amount', async () => {
@@ -600,7 +600,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
         supplierId, purchaseDate: PURCHASE_DATE, lines: [{ orderItemId: order.items[0]?.id ?? '', quantity: 1, unitCost: '14.75' }],
       });
       await confirmViaApi(draft.purchase.id);
-      expect((await orderDetail(order)).profit.directProfitBeforeExpensesAndRefunds).toBe('-4.75');
+      expect((await orderDetail(order)).profit.directProfitBeforeRefunds).toBe('-4.75');
     });
 
     it('excludes draft, cancelled and reversed purchases', async () => {
@@ -614,7 +614,7 @@ describe.skipIf(!hasTestDatabase)('supplier purchases', () => {
       await confirmViaApi(reversed.purchase.id);
       await purchaseRoute('reverse', reversed.purchase.id, { body: { reason: 'Mistake' } });
       await purchaseRoute('cancel', cancelled.purchase.id);
-      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '1.00', draftSupplierCosts: '8.00', directProfitBeforeExpensesAndRefunds: '99.00' });
+      expect((await orderDetail(order)).profit).toMatchObject({ confirmedSupplierCosts: '1.00', draftSupplierCosts: '8.00', directProfitBeforeRefunds: '99.00' });
     });
 
     it('keeps the ledger balanced in every currency after confirmations and reversals', async () => {

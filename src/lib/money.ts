@@ -63,6 +63,14 @@ export function formatDbMoney(value: string): string {
   return formatMoney(parseDbMoney(value));
 }
 
+/**
+ * A display amount shown as a deduction ("−25.25"). A zero amount is shown without a sign ("0.00"), never as "−0.00".
+ * `formatted` is an amount already formatted by formatMoney/formatDbMoney.
+ */
+export function formatDeduction(formatted: string): string {
+  return parseDbMoney(formatted) === ZERO ? formatted : `\u2212${formatted}`;
+}
+
 export function multiplyByQuantity(unit: Money, quantity: number): Money {
   if (!Number.isSafeInteger(quantity) || quantity < 0) throw new Error('Quantity must be a non-negative integer');
   return unit * BigInt(quantity);

@@ -12,7 +12,9 @@ import {
 import {
   deleteOrderItems, findReferencedItemIds, insertOrderItems, listOrderItems, listOrderItemsForOrders, type OrderItemRow,
 } from '@/server/dal/order-items';
-import { costSummaryByOrder } from '@/server/dal/order-profit';
+import { expenseSummaryByOrder, costSummaryByOrder } from '@/server/dal/order-profit';
+import { listExpensesForOrder } from '@/server/dal/expenses';
+import { effectiveStatusOf as effectiveExpenseStatus } from '@/server/expenses/service';
 import { findProductsByIds } from '@/server/dal/products';
 import { listPurchasesForOrder } from '@/server/dal/supplier-purchase-items';
 import { tenantScope, type PageRequest, type TenantScope } from '@/server/dal/tenant-scope';
@@ -107,6 +109,16 @@ export interface OrderPurchaseView {
   readonly effectiveStatus: string;
 }
 
+/** An expense recorded against the order (DIRECT). Drafts, voided and reversed ones are listed with their status and never counted. */
+export interface OrderExpenseView {
+  readonly expenseId: string;
+  readonly categoryName: string;
+  /** Calendar date in the business timezone. */
+  readonly expenseDate: string;
+  readonly amount: string;
+  readonly effectiveStatus: 'DRAFT' | 'CONFIRMED' | 'REVERSED' | 'VOIDED';
+}
+
 export interface OrderListItem extends OrderView {
   readonly itemCount: number;
   readonly profit: OrderProfitView;
@@ -117,6 +129,7 @@ export interface OrderDetail {
   readonly items: readonly OrderItemView[];
   readonly profit: OrderProfitView;
   readonly purchases: readonly OrderPurchaseView[];
+  readonly expenses: readonly OrderExpenseView[];
   readonly allowedNextStatuses: readonly string[];
   readonly editable: boolean;
 }
@@ -142,17 +155,19 @@ function effectivePurchaseStatus(status: string, reversed: boolean): string {
 
 /** Shared by reads and by mutations that return the updated order from inside their transaction. */
 export async function buildOrderDetail(scope: TenantScope, order: OrderRow, timeZone: string): Promise<OrderDetail> {
-  const [items, referenced, costs, purchases] = await Promise.all([
+  const [items, referenced, costs, expenseTotals, purchases, expenses] = await Promise.all([
     listOrderItems(scope, order.id),
     findReferencedItemIds(scope, order.id),
     costSummaryByOrder(scope, [order.id]),
+    expenseSummaryByOrder(scope, [order.id]),
     listPurchasesForOrder(scope, order.id),
+    listExpensesForOrder(scope, order.id),
   ]);
   const lockedIds = new Set(referenced);
   return {
     order: toOrderView(order, timeZone),
     items: items.map((item) => toOrderItemView(item, lockedIds.has(item.id))),
-    profit: buildOrderProfit(order.netPayableAmount, costs.get(order.id), order.status),
+    profit: buildOrderProfit(order.netPayableAmount, costs.get(order.id), expenseTotals.get(order.id), order.status),
     purchases: purchases.map((purchase) => ({
       purchaseId: purchase.purchaseId,
       supplierName: purchase.supplierName,
@@ -160,6 +175,13 @@ export async function buildOrderDetail(scope: TenantScope, order: OrderRow, time
       purchaseDate: purchase.purchaseDate ? instantToZonedDate(purchase.purchaseDate, timeZone) : null,
       orderTotal: formatDbMoney(purchase.orderTotal),
       effectiveStatus: effectivePurchaseStatus(purchase.status, purchase.reversed),
+    })),
+    expenses: expenses.map((expense) => ({
+      expenseId: expense.id,
+      categoryName: expense.categoryName,
+      expenseDate: instantToZonedDate(expense.expenseDate, timeZone),
+      amount: formatDbMoney(expense.amount),
+      effectiveStatus: effectiveExpenseStatus(expense),
     })),
     allowedNextStatuses: allowedNextStatuses(order.status),
     editable: isOrderEditable(order.status),
@@ -240,13 +262,13 @@ export async function listOrders(db: Database, tenant: TenantContext, request: P
   const business = await loadBusinessContext(db, tenant);
   const [rows, total] = await Promise.all([listOrderRows(scope, request), countOrders(scope)]);
   const ids = rows.map((row) => row.id);
-  const [items, costs] = await Promise.all([listOrderItemsForOrders(scope, ids), costSummaryByOrder(scope, ids)]);
+  const [items, costs, expenseTotals] = await Promise.all([listOrderItemsForOrders(scope, ids), costSummaryByOrder(scope, ids), expenseSummaryByOrder(scope, ids)]);
   const itemCounts = new Map<string, number>();
   for (const item of items) itemCounts.set(item.orderId, (itemCounts.get(item.orderId) ?? 0) + 1);
   return toPage(rows.map((row) => ({
     ...toOrderView(row, business.timeZone),
     itemCount: itemCounts.get(row.id) ?? 0,
-    profit: buildOrderProfit(row.netPayableAmount, costs.get(row.id), row.status),
+    profit: buildOrderProfit(row.netPayableAmount, costs.get(row.id), expenseTotals.get(row.id), row.status),
   })), request, total);
 }
 

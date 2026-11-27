@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  formatDbMoney, formatMoney, isWithinMoneyLimit, MAX_MONEY, multiplyByQuantity, parseDbMoney, parseMoneyInput, sumMoney, toDbMoney,
+  formatDbMoney, formatDeduction, formatMoney, isWithinMoneyLimit, MAX_MONEY, multiplyByQuantity, parseDbMoney, parseMoneyInput, sumMoney, toDbMoney,
 } from '@/lib/money';
 
 const money = (text: string) => {
@@ -83,5 +83,20 @@ describe('limits', () => {
 
   it('keeps the largest legal total inside NUMERIC(19,4)', () => {
     expect(toDbMoney(MAX_MONEY).replace('.', '').length).toBeLessThanOrEqual(19);
+  });
+});
+
+describe('formatDeduction', () => {
+  it('prefixes a real amount with a minus sign (U+2212)', () => {
+    expect(formatDeduction('25.25')).toBe('\u221225.25');
+    expect(formatDeduction('0.0050')).toBe('\u22120.0050');
+    expect(formatDeduction(formatDbMoney('4.2500'))).toBe('\u22124.25');
+  });
+
+  it('shows zero without a sign, however it was formatted', () => {
+    expect(formatDeduction('0.00')).toBe('0.00');
+    expect(formatDeduction(formatMoney(money('0')))).toBe('0.00');
+    expect(formatDeduction(formatDbMoney('0.0000'))).toBe('0.00');
+    expect(formatDeduction('0')).toBe('0');
   });
 });

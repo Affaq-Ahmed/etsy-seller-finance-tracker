@@ -53,7 +53,7 @@ describe.skipIf(!hasTestDatabase)('orders', () => {
         .toEqual([['Handmade Mug', 2, 'MUG-1', false], ['Plate', 1, null, false]]);
       expect(body.profit).toEqual({
         netPayable: '87.50', revenue: '87.50', revenueExcluded: false, confirmedSupplierCosts: '0.00',
-        directProfitBeforeExpensesAndRefunds: '87.50', draftSupplierCosts: '0.00', includesExpenses: false, includesRefunds: false,
+        directProfitBeforeRefunds: '87.50', draftSupplierCosts: '0.00', confirmedDirectExpenses: '0.00', draftDirectExpenses: '0.00', includesExpenses: true, includesRefunds: false,
       });
       expect(body.allowedNextStatuses).toEqual(['SUPPLIER_ORDERED', 'CANCELLED']);
       // Tenant and owner identity are never part of the response.
@@ -70,7 +70,7 @@ describe.skipIf(!hasTestDatabase)('orders', () => {
       const list = await (await routes.orders.list(apiRequest(app, '/api/v1/orders', { cookie: user.cookie, query: '?limit=100' }))).json();
       const entry = list.items.find((item: { id: string }) => item.id === created.order.id);
       expect(entry).toMatchObject({ etsyOrderId: '777000111', itemCount: 2, status: 'NEW' });
-      expect(entry.profit.directProfitBeforeExpensesAndRefunds).toBe('100.00');
+      expect(entry.profit.directProfitBeforeRefunds).toBe('100.00');
     });
 
     it('returns 404 for a missing or malformed order ID', async () => {
@@ -110,7 +110,7 @@ describe.skipIf(!hasTestDatabase)('orders', () => {
       const pricey = await makeProduct(app, user, { name: 'Expensive default', defaultUnitCost: '999.00' });
       const order = await makeOrder(app, user, { netPayableAmount: '50.00', items: [{ productId: pricey.id, quantity: 3 }] });
       expect(order.profit.confirmedSupplierCosts).toBe('0.00');
-      expect(order.profit.directProfitBeforeExpensesAndRefunds).toBe('50.00');
+      expect(order.profit.directProfitBeforeRefunds).toBe('50.00');
       expect(await raw`SELECT 1 FROM journal_entries WHERE account_id = ${user.tenant.accountId} AND source_id IN (${order.order.id}, ${pricey.id})`).toHaveLength(0);
     });
 

@@ -55,12 +55,12 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       expect(after.order.status).toBe('CANCELLED');
       expect(after.profit).toEqual({
         netPayable: '100.00', revenue: '0.00', revenueExcluded: true, confirmedSupplierCosts: '0.00',
-        directProfitBeforeExpensesAndRefunds: '0.00', draftSupplierCosts: '0.00', includesExpenses: false, includesRefunds: false,
+        directProfitBeforeRefunds: '0.00', draftSupplierCosts: '0.00', confirmedDirectExpenses: '0.00', draftDirectExpenses: '0.00', includesExpenses: true, includesRefunds: false,
       });
       const api = await (await callRoute(routes.orders.get, apiRequest(app, `/api/v1/orders/${order.order.id}`, { cookie: user.cookie }), { orderId: order.order.id })).json();
       expect(api.profit).toMatchObject({ revenue: '0.00', revenueExcluded: true });
       const list = await (await routes.orders.list(apiRequest(app, '/api/v1/orders', { cookie: user.cookie, query: '?limit=100' }))).json();
-      expect(list.items.find((item: { id: string }) => item.id === order.order.id).profit).toMatchObject({ netPayable: '100.00', revenue: '0.00', directProfitBeforeExpensesAndRefunds: '0.00' });
+      expect(list.items.find((item: { id: string }) => item.id === order.order.id).profit).toMatchObject({ netPayable: '100.00', revenue: '0.00', directProfitBeforeRefunds: '0.00' });
     });
 
     it('rejects a new purchase through the API with 422 naming the line, and creates nothing', async () => {
@@ -150,7 +150,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       expect(await auditCount(raw, tenantId(), 'supplier_purchase', 'CONFIRM', draft.purchase.id)).toBe(0);
       const after = await detail(order);
       expect(after.order.status).toBe('CANCELLED');
-      expect(after.profit).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '0.00', directProfitBeforeExpensesAndRefunds: '0.00', draftSupplierCosts: DEFAULT_PURCHASE_TOTAL });
+      expect(after.profit).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '0.00', directProfitBeforeRefunds: '0.00', draftSupplierCosts: DEFAULT_PURCHASE_TOTAL });
     });
 
     it('tells the UI why: canConfirm is false and the reason is given; the draft can still be cancelled', async () => {
@@ -175,7 +175,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       expect(await repaired.json()).toMatchObject({ canConfirm: true, confirmBlockedReason: null });
       const confirmed = await purchaseRoute('confirm', draft.purchase.id);
       expect(confirmed.status).toBe(200);
-      expect((await detail(open)).profit).toMatchObject({ confirmedSupplierCosts: '4.00', directProfitBeforeExpensesAndRefunds: '56.00' });
+      expect((await detail(open)).profit).toMatchObject({ confirmedSupplierCosts: '4.00', directProfitBeforeRefunds: '56.00' });
       expect((await detail(cancelled)).profit.confirmedSupplierCosts).toBe('0.00');
     });
   });
@@ -185,7 +185,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       const order = await makeOrder(app, user, { netPayableAmount: '100.00' });
       const draft = await makeDraftPurchase(app, user, supplierId, order);
       await purchaseRoute('confirm', draft.purchase.id);
-      expect((await detail(order)).profit.directProfitBeforeExpensesAndRefunds).toBe('74.75');
+      expect((await detail(order)).profit.directProfitBeforeRefunds).toBe('74.75');
       const journals = await journalEntryCount(raw, tenantId());
 
       await cancel(order);
@@ -194,7 +194,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       expect(after.order.status).toBe('CANCELLED');
       expect(after.profit).toMatchObject({
         netPayable: '100.00', revenue: '0.00', revenueExcluded: true,
-        confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeExpensesAndRefunds: '-25.25',
+        confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeRefunds: '-25.25',
       });
       expect(after.purchases).toEqual([expect.objectContaining({ effectiveStatus: 'CONFIRMED', orderTotal: DEFAULT_PURCHASE_TOTAL })]);
       // Nothing was erased or reversed: the same single posting, no reversal, no REVERSE audit.
@@ -224,7 +224,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
         method: 'POST', cookie: user.cookie, body: { reason: 'Order cancelled, supplier refunded us' },
       }), { purchaseId: draft.purchase.id });
       expect(reversal.status).toBe(200);
-      expect((await detail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeExpensesAndRefunds: '0.00' });
+      expect((await detail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeRefunds: '0.00' });
     });
 
     it('cancelling one order leaves a purchase that spans two orders confirmed, and the other order unaffected, to the cent', async () => {
@@ -235,8 +235,8 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       });
       await confirmPurchase(app.db, user.tenant, spanning.purchase.id);
       await cancel(orderA);
-      expect((await detail(orderA)).profit).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '12.34', directProfitBeforeExpensesAndRefunds: '-12.34' });
-      expect((await detail(orderB)).profit).toMatchObject({ revenue: '50.00', confirmedSupplierCosts: '0.10', directProfitBeforeExpensesAndRefunds: '49.90' });
+      expect((await detail(orderA)).profit).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '12.34', directProfitBeforeRefunds: '-12.34' });
+      expect((await detail(orderB)).profit).toMatchObject({ revenue: '50.00', confirmedSupplierCosts: '0.10', directProfitBeforeRefunds: '49.90' });
       expect((await getPurchaseDetail(app.db, user.tenant, spanning.purchase.id)).purchase.effectiveStatus).toBe('CONFIRMED');
     });
 
@@ -248,7 +248,7 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
       });
       await confirmPurchase(app.db, user.tenant, purchase.purchase.id);
       await cancel(order);
-      expect((await detail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.20', directProfitBeforeExpensesAndRefunds: '-0.20' });
+      expect((await detail(order)).profit).toMatchObject({ confirmedSupplierCosts: '0.20', directProfitBeforeRefunds: '-0.20' });
     });
   });
 
@@ -316,12 +316,12 @@ describe.skipIf(!hasTestDatabase)('cancelled orders (D9)', () => {
         if (confirmResult.status === 'fulfilled') {
           outcomes.confirmedThenCancelled++;
           expect(journals, `round ${round}`).toBe(1);
-          expect(profit, `round ${round}`).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeExpensesAndRefunds: '-25.25' });
+          expect(profit, `round ${round}`).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: DEFAULT_PURCHASE_TOTAL, directProfitBeforeRefunds: '-25.25' });
         } else {
           outcomes.cancelledFirst++;
           expect(confirmResult.reason, `round ${round}`).toMatchObject({ code: 'ORDER_CANCELLED' });
           expect(journals, `round ${round}`).toBe(0);
-          expect(profit, `round ${round}`).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '0.00', directProfitBeforeExpensesAndRefunds: '0.00' });
+          expect(profit, `round ${round}`).toMatchObject({ revenue: '0.00', confirmedSupplierCosts: '0.00', directProfitBeforeRefunds: '0.00' });
         }
       }
       expect(outcomes.confirmedThenCancelled + outcomes.cancelledFirst).toBe(40);

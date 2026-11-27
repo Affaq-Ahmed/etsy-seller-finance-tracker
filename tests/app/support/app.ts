@@ -7,8 +7,11 @@ import { onboardBusiness } from '@/server/onboarding/service';
 import { sessionRoute, tenantRoute } from '@/server/http/routes';
 import { postOnboarding } from '@/server/api/onboarding';
 import { getBusiness } from '@/server/api/business';
+import {
+  getExpense, getExpenses, postConfirmExpense, postCreateExpense, postReverseExpense, postVoidExpense,
+} from '@/server/api/expenses';
 import { getOrder, getOrders, patchOrder, postOrder, postOrderStatus } from '@/server/api/orders';
-import { orderParamsSchema, purchaseParamsSchema } from '@/server/api/params';
+import { expenseParamsSchema, orderParamsSchema, purchaseParamsSchema } from '@/server/api/params';
 import { getProducts, postProduct } from '@/server/api/products';
 import {
   getPurchase, getPurchases, patchPurchase, postCancelPurchase, postConfirmPurchase, postPurchase, postReversePurchase,
@@ -140,6 +143,7 @@ export function apiRoutes(app: AppContainer) {
   const getDeps = () => app;
   const order = { getDeps, params: orderParamsSchema };
   const purchase = { getDeps, params: purchaseParamsSchema };
+  const expense = { getDeps, params: expenseParamsSchema };
   return {
     onboarding: sessionRoute(postOnboarding, { getDeps }),
     business: tenantRoute(getBusiness, { getDeps }),
@@ -160,6 +164,14 @@ export function apiRoutes(app: AppContainer) {
       confirm: tenantRoute(postConfirmPurchase, purchase),
       cancel: tenantRoute(postCancelPurchase, purchase),
       reverse: tenantRoute(postReversePurchase, purchase),
+    },
+    expenses: {
+      list: tenantRoute(getExpenses, { getDeps }),
+      create: tenantRoute(postCreateExpense, { getDeps }),
+      get: tenantRoute(getExpense, expense),
+      confirm: tenantRoute(postConfirmExpense, expense),
+      void: tenantRoute(postVoidExpense, expense),
+      reverse: tenantRoute(postReverseExpense, expense),
     },
   };
 }

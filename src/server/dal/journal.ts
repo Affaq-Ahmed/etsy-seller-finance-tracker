@@ -69,3 +69,19 @@ export function purchaseIsReversedSql(accountIdColumn: SQLWrapper, purchaseIdCol
     WHERE initial_entry.account_id = ${accountIdColumn} AND initial_entry.source_type = 'supplier_purchase'
       AND initial_entry.source_id = ${purchaseIdColumn} AND initial_entry.source_event = 'INITIAL')`;
 }
+
+/**
+ * Sibling of `purchaseIsReversedSql` for expenses: the expense has a finalized
+ * reversal of its INITIAL posting. A reversed expense keeps status CONFIRMED
+ * (posted rows are immutable); its reversed state is derived from the ledger.
+ * Every report of confirmed expenses must use this predicate, never
+ * `status = 'CONFIRMED'` alone.
+ */
+export function expenseIsReversedSql(accountIdColumn: SQLWrapper, expenseIdColumn: SQLWrapper): SQL<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM journal_entries initial_entry
+    JOIN journal_entries reversal ON reversal.account_id = initial_entry.account_id
+      AND reversal.reversal_of_entry_id = initial_entry.id AND reversal.status = 'FINALIZED'
+    WHERE initial_entry.account_id = ${accountIdColumn} AND initial_entry.source_type = 'expense'
+      AND initial_entry.source_id = ${expenseIdColumn} AND initial_entry.source_event = 'INITIAL')`;
+}

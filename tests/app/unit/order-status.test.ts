@@ -46,50 +46,79 @@ describe('order status transitions (owner-approved, Phase 2a)', () => {
   });
 });
 
-describe('order profit (direct profit before expenses and refunds)', () => {
+describe('order profit (direct profit before refunds)', () => {
   it('is net payable minus confirmed costs, and labels what it leaves out', () => {
-    expect(buildOrderProfit('100.0000', { confirmedCost: '25.2500', draftCost: '8.0000' }, 'SUPPLIER_ORDERED')).toEqual({
+    expect(buildOrderProfit('100.0000', { confirmedCost: '25.2500', draftCost: '8.0000' }, undefined, 'SUPPLIER_ORDERED')).toEqual({
       netPayable: '100.00', revenue: '100.00', revenueExcluded: false, confirmedSupplierCosts: '25.25',
-      directProfitBeforeExpensesAndRefunds: '74.75', draftSupplierCosts: '8.00', includesExpenses: false, includesRefunds: false,
+      directProfitBeforeRefunds: '74.75', draftSupplierCosts: '8.00', confirmedDirectExpenses: '0.00', draftDirectExpenses: '0.00', includesExpenses: true, includesRefunds: false,
     });
   });
 
   it('treats a missing summary as no costs', () => {
-    expect(buildOrderProfit('87.5000', undefined, 'NEW')).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeExpensesAndRefunds: '87.50' });
+    expect(buildOrderProfit('87.5000', undefined, undefined, 'NEW')).toMatchObject({ confirmedSupplierCosts: '0.00', directProfitBeforeRefunds: '87.50' });
   });
 
   it('never counts draft costs', () => {
-    expect(buildOrderProfit('10.0000', { confirmedCost: '0', draftCost: '999.0000' }, 'NEW').directProfitBeforeExpensesAndRefunds).toBe('10.00');
+    expect(buildOrderProfit('10.0000', { confirmedCost: '0', draftCost: '999.0000' }, undefined, 'NEW').directProfitBeforeRefunds).toBe('10.00');
   });
 
   it('is exact for fractional cents and shows losses', () => {
-    expect(buildOrderProfit('0.3000', { confirmedCost: '0.2000', draftCost: '0' }, 'NEW').directProfitBeforeExpensesAndRefunds).toBe('0.10');
-    expect(buildOrderProfit('10.0000', { confirmedCost: '14.7500', draftCost: '0' }, 'NEW').directProfitBeforeExpensesAndRefunds).toBe('-4.75');
-    expect(buildOrderProfit('0.0000', { confirmedCost: '0.0050', draftCost: '0' }, 'NEW').directProfitBeforeExpensesAndRefunds).toBe('-0.0050');
+    expect(buildOrderProfit('0.3000', { confirmedCost: '0.2000', draftCost: '0' }, undefined, 'NEW').directProfitBeforeRefunds).toBe('0.10');
+    expect(buildOrderProfit('10.0000', { confirmedCost: '14.7500', draftCost: '0' }, undefined, 'NEW').directProfitBeforeRefunds).toBe('-4.75');
+    expect(buildOrderProfit('0.0000', { confirmedCost: '0.0050', draftCost: '0' }, undefined, 'NEW').directProfitBeforeRefunds).toBe('-0.0050');
+  });
+
+  describe('order expenses (ARCHITECTURE.md A38)', () => {
+    const costs = { confirmedCost: '25.2500', draftCost: '8.0000' };
+
+    it('subtracts confirmed expenses after supplier costs and shows draft expenses apart', () => {
+      expect(buildOrderProfit('100.0000', costs, { confirmedExpenses: '4.2500', draftExpenses: '7.0000' }, 'SUPPLIER_ORDERED')).toEqual({
+        netPayable: '100.00', revenue: '100.00', revenueExcluded: false, confirmedSupplierCosts: '25.25', draftSupplierCosts: '8.00',
+        confirmedDirectExpenses: '4.25', draftDirectExpenses: '7.00', directProfitBeforeRefunds: '70.50', includesExpenses: true, includesRefunds: false,
+      });
+    });
+
+    it('never counts draft expenses, and treats a missing summary as none', () => {
+      expect(buildOrderProfit('10.0000', undefined, { confirmedExpenses: '0', draftExpenses: '999.0000' }, 'NEW').directProfitBeforeRefunds).toBe('10.00');
+      expect(buildOrderProfit('10.0000', undefined, undefined, 'NEW')).toMatchObject({ confirmedDirectExpenses: '0.00', draftDirectExpenses: '0.00' });
+    });
+
+    it('is exact with fractional cents: 0.10 + 0.20 on a 0.30 order is exactly 0', () => {
+      expect(buildOrderProfit('0.3000', undefined, { confirmedExpenses: '0.3000', draftExpenses: '0' }, 'NEW').directProfitBeforeRefunds).toBe('0.00');
+      expect(buildOrderProfit('0.3000', { confirmedCost: '0.1000', draftCost: '0' }, { confirmedExpenses: '0.2100', draftExpenses: '0' }, 'NEW').directProfitBeforeRefunds).toBe('-0.01');
+      expect(buildOrderProfit('0.0000', undefined, { confirmedExpenses: '0.0050', draftExpenses: '0' }, 'NEW').directProfitBeforeRefunds).toBe('-0.0050');
+    });
+
+    it('still counts expenses on a cancelled order, whose revenue is zero, so it shows the loss', () => {
+      expect(buildOrderProfit('100.0000', undefined, { confirmedExpenses: '4.2500', draftExpenses: '1.0000' }, 'CANCELLED')).toMatchObject({
+        revenue: '0.00', revenueExcluded: true, confirmedDirectExpenses: '4.25', draftDirectExpenses: '1.00', directProfitBeforeRefunds: '-4.25',
+      });
+      expect(buildOrderProfit('100.0000', costs, { confirmedExpenses: '4.2500', draftExpenses: '0' }, 'CANCELLED').directProfitBeforeRefunds).toBe('-29.50');
+    });
   });
 
   describe('cancelled orders count no revenue (PRODUCT.md D9)', () => {
     it('shows the recorded net payable but counts zero of it', () => {
-      expect(buildOrderProfit('100.0000', undefined, 'CANCELLED')).toEqual({
+      expect(buildOrderProfit('100.0000', undefined, undefined, 'CANCELLED')).toEqual({
         netPayable: '100.00', revenue: '0.00', revenueExcluded: true, confirmedSupplierCosts: '0.00',
-        directProfitBeforeExpensesAndRefunds: '0.00', draftSupplierCosts: '0.00', includesExpenses: false, includesRefunds: false,
+        directProfitBeforeRefunds: '0.00', draftSupplierCosts: '0.00', confirmedDirectExpenses: '0.00', draftDirectExpenses: '0.00', includesExpenses: true, includesRefunds: false,
       });
     });
 
     it('keeps confirmed costs, so the order shows a loss, exactly', () => {
-      expect(buildOrderProfit('100.0000', { confirmedCost: '25.2500', draftCost: '0' }, 'CANCELLED').directProfitBeforeExpensesAndRefunds).toBe('-25.25');
-      expect(buildOrderProfit('0.3000', { confirmedCost: '0.2000', draftCost: '0' }, 'CANCELLED').directProfitBeforeExpensesAndRefunds).toBe('-0.20');
+      expect(buildOrderProfit('100.0000', { confirmedCost: '25.2500', draftCost: '0' }, undefined, 'CANCELLED').directProfitBeforeRefunds).toBe('-25.25');
+      expect(buildOrderProfit('0.3000', { confirmedCost: '0.2000', draftCost: '0' }, undefined, 'CANCELLED').directProfitBeforeRefunds).toBe('-0.20');
     });
 
     it('still never counts draft costs', () => {
-      expect(buildOrderProfit('50.0000', { confirmedCost: '0', draftCost: '12.0000' }, 'CANCELLED')).toMatchObject({ directProfitBeforeExpensesAndRefunds: '0.00', draftSupplierCosts: '12.00' });
+      expect(buildOrderProfit('50.0000', { confirmedCost: '0', draftCost: '12.0000' }, undefined, 'CANCELLED')).toMatchObject({ directProfitBeforeRefunds: '0.00', draftSupplierCosts: '12.00' });
     });
 
     it('excludes revenue for CANCELLED only, never for any other status', () => {
       for (const status of ORDER_STATUSES) {
-        const profit = buildOrderProfit('10.0000', { confirmedCost: '4.0000', draftCost: '0' }, status);
+        const profit = buildOrderProfit('10.0000', { confirmedCost: '4.0000', draftCost: '0' }, undefined, status);
         expect(profit.revenueExcluded, status).toBe(status === 'CANCELLED');
-        expect(profit.directProfitBeforeExpensesAndRefunds, status).toBe(status === 'CANCELLED' ? '-4.00' : '6.00');
+        expect(profit.directProfitBeforeRefunds, status).toBe(status === 'CANCELLED' ? '-4.00' : '6.00');
       }
     });
   });

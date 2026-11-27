@@ -146,4 +146,49 @@ describe.skipIf(!hasTestDatabase)('route files through the process composition r
     expect(signOutResponse.status).toBe(200);
     expect((await businessRoute.GET(request('/api/v1/business', { cookie: cookie! }))).status).toBe(401);
   });
+
+  it('the six expense route files are wired to their handlers, guards and route parameters', async () => {
+    const authRoute = await import('@/app/api/auth/[...all]/route');
+    const onboardingRoute = await import('@/app/api/v1/onboarding/route');
+    const listRoute = await import('@/app/api/v1/expenses/route');
+    const itemRoute = await import('@/app/api/v1/expenses/[expenseId]/route');
+    const confirmRoute = await import('@/app/api/v1/expenses/[expenseId]/confirm/route');
+    const voidRoute = await import('@/app/api/v1/expenses/[expenseId]/void/route');
+    const reverseRoute = await import('@/app/api/v1/expenses/[expenseId]/reverse/route');
+    const withId = (id: string) => ({ params: Promise.resolve({ expenseId: id }) });
+    const missing = '00000000-0000-4000-8000-0000000000ab';
+
+    // Every route answers 401 without a session.
+    expect((await listRoute.GET(request('/api/v1/expenses'))).status).toBe(401);
+    expect((await listRoute.POST(request('/api/v1/expenses', { method: 'POST', body: {} }))).status).toBe(401);
+    expect((await itemRoute.GET(request(`/api/v1/expenses/${missing}`), withId(missing))).status).toBe(401);
+    expect((await confirmRoute.POST(request(`/api/v1/expenses/${missing}/confirm`, { method: 'POST' }), withId(missing))).status).toBe(401);
+    expect((await voidRoute.POST(request(`/api/v1/expenses/${missing}/void`, { method: 'POST' }), withId(missing))).status).toBe(401);
+    expect((await reverseRoute.POST(request(`/api/v1/expenses/${missing}/reverse`, { method: 'POST', body: { reason: 'x' } }), withId(missing))).status).toBe(401);
+
+    const credentials = newCredentials('e2e-expenses');
+    expect((await authRoute.POST(request('/api/auth/sign-up/email', { method: 'POST', body: credentials }))).status).toBe(200);
+    const signIn = await authRoute.POST(request('/api/auth/sign-in/email', { method: 'POST', body: { email: credentials.email, password: credentials.password } }));
+    const cookie = sessionCookieFrom(signIn)!;
+    expect((await onboardingRoute.POST(request('/api/v1/onboarding', { method: 'POST', cookie, body: { shopName: 'Expense Route Shop' } }))).status).toBe(201);
+
+    const body = { expenseType: 'SHARED', categoryType: 'SOFTWARE_SUBSCRIPTION', amount: '12.50', expenseDate: '2026-11-21' };
+    const created = await listRoute.POST(request('/api/v1/expenses', { method: 'POST', cookie, body }));
+    expect(created.status).toBe(201);
+    expect(created.headers.get('cache-control')).toBe(NO_STORE);
+    const id = (await created.json()).expense.id as string;
+    const listed = await (await listRoute.GET(request('/api/v1/expenses', { cookie }))).json();
+    expect(listed.items.map((item: { id: string }) => item.id)).toEqual([id]);
+    expect((await itemRoute.GET(request(`/api/v1/expenses/${id}`, { cookie }), withId(id))).status).toBe(200);
+    expect((await itemRoute.GET(request('/api/v1/expenses/not-a-uuid', { cookie }), withId('not-a-uuid'))).status).toBe(404);
+
+    const confirmed = await confirmRoute.POST(request(`/api/v1/expenses/${id}/confirm`, { method: 'POST', cookie }), withId(id));
+    expect([confirmed.status, (await confirmed.json()).alreadyConfirmed]).toEqual([200, false]);
+    const reversed = await reverseRoute.POST(request(`/api/v1/expenses/${id}/reverse`, { method: 'POST', cookie, body: { reason: 'Wired route check' } }), withId(id));
+    expect([reversed.status, (await reversed.json()).expense.effectiveStatus]).toEqual([200, 'REVERSED']);
+
+    const draft = (await (await listRoute.POST(request('/api/v1/expenses', { method: 'POST', cookie, body }))).json()).expense.id as string;
+    const voided = await voidRoute.POST(request(`/api/v1/expenses/${draft}/void`, { method: 'POST', cookie }), withId(draft));
+    expect([voided.status, (await voided.json()).expense.effectiveStatus]).toEqual([200, 'VOIDED']);
+  });
 });

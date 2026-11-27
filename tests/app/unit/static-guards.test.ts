@@ -137,7 +137,7 @@ describe('T16 tenant table coverage meta-test', () => {
     .map((config) => config.name)
     .sort();
 
-  // Tables exposed through the DAL (M2 and Phase 2a), with their DAL module.
+  // Tables exposed through the DAL (M2, Phase 2a and Phase 2b Slice 1), with their DAL module.
   const EXPOSED: Record<string, string> = {
     account_settings: 'src/server/dal/account-settings.ts',
     financial_accounts: 'src/server/dal/financial-accounts.ts',
@@ -150,6 +150,9 @@ describe('T16 tenant table coverage meta-test', () => {
     supplier_purchase_items: 'src/server/dal/supplier-purchase-items.ts',
     journal_entries: 'src/server/dal/journal.ts',
     journal_lines: 'src/server/dal/journal.ts',
+    // Phase 2b, Slice 1 (cross-tenant tests in expenses-isolation).
+    expense_categories: 'src/server/dal/expense-categories.ts',
+    expenses: 'src/server/dal/expenses.ts',
   };
   const exportName = (tableName: string) => Object.entries(schema).find(([, value]) => is(value, Table) && getTableConfig(value as PgTable).name === tableName)?.[0];
 
@@ -172,7 +175,7 @@ describe('T16 tenant table coverage meta-test', () => {
 
   it('tables not yet exposed are imported by no application code', () => {
     const notExposed = new Set(tenantTables.filter((table) => !(table in EXPOSED)).map((table) => exportName(table)));
-    expect(notExposed.size).toBe(23);
+    expect(notExposed.size).toBe(21);
     for (const file of sourceFiles) {
       const name = rel(file);
       if (name.startsWith('src/db/')) continue;

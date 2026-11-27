@@ -22,8 +22,8 @@ async function BusinessHeader() {
     <>
       <PageHeader
         title={business?.shopName ?? 'Your business'}
-        description="Record Etsy orders and the supplier purchases behind them. Payouts, expenses and reports arrive in later phases."
-        actions={<><PrimaryLink href="/app/orders/new">New order</PrimaryLink><SecondaryLink href="/app/purchases">Purchases</SecondaryLink></>}
+        description="Record Etsy orders, the supplier purchases and the expenses behind them. Payouts, refunds and reports arrive in later phases."
+        actions={<><PrimaryLink href="/app/orders/new">New order</PrimaryLink><SecondaryLink href="/app/purchases">Purchases</SecondaryLink><SecondaryLink href="/app/expenses">Expenses</SecondaryLink></>}
       />
     </>
   );
