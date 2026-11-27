@@ -5,7 +5,7 @@ import { SignOutButton } from '@/components/auth/sign-out-button';
 // Static navigation only. The layout reads no session and no tenant data: every
 // page below calls requireTenant() itself (layouts are not a security boundary).
 const LINKS: ReadonlyArray<readonly [string, string]> = [
-  ['/app', 'Home'], ['/app/orders', 'Orders'], ['/app/purchases', 'Purchases'], ['/app/suppliers', 'Suppliers'], ['/app/products', 'Products'],
+  ['/app', 'Home'], ['/app/orders', 'Orders'], ['/app/purchases', 'Purchases'], ['/app/expenses', 'Expenses'], ['/app/suppliers', 'Suppliers'], ['/app/products', 'Products'],
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
