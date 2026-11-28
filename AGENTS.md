@@ -242,9 +242,9 @@ For substantial feature work, use the following six-agent workflow. Assign the s
 | Agent | Model / Effort | Responsibility |
 |---|---|---|
 | Planner | Opus 5.5, Extra High | Inspect requirements, docs, schema, code and tests; create a scoped implementation plan. |
-| Documentation Reviewer | Opus 5.5, High | Independently challenge the plan against the baseline documents and this file. |
+| Documentation Reviewer | Sonnet 5.5, Extra High | Independently challenge the plan against the baseline documents and this file. |
 | Implementation Agent | Sonnet 5.5, High | Implement only the approved plan; sole repository writer during implementation. |
-| Code Reviewer | Opus 5.5, High | Independently review the actual diff for correctness, security, financial integrity and maintainability. |
+| Code Reviewer | Opus 5.5, Medium | Independently review the actual diff for correctness, security, financial integrity and maintainability. |
 | QA / Tester | Sonnet 5.5, High | Independently exercise APIs, database effects and UI flows; report reproducible defects. |
 | Git / Release Agent | Sonnet 5.5, Medium | Commit and push approved changes, pull the latest `main` into the feature branch, resolve conflicts if safe, rerun relevant checks, and push the updated feature branch. |
 
